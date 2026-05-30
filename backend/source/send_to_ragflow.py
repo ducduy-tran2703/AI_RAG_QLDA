@@ -1,23 +1,26 @@
 """
-send_to_ragflow.py  (v2 — simplified)
-=======================================
+send_to_ragflow.py  (v3 — dual assistant)
+==========================================
 Đọc _chunks.json từ ragflow_chunks/,
-gửi từng chunk theo thứ tự vào RAGFlow Chat API,
-nhận kết quả → lưu vào ragflow_results/.
+gửi từng chunk vào đúng RAGFlow Assistant:
+  - chunk_000 (type=meta)    → ASSISTANT_MANIFEST_ID  (kiểm tra cấu trúc)
+  - chunk_001...N (content)  → ASSISTANT_FORMAT_ID    (kiểm tra định dạng)
 
 Yêu cầu trước khi chạy:
-  1. Đã tạo Assistant trong RAGFlow (gắn với Knowledge Base NĐ30)
-  2. Đã cấu hình Assistant trong RAGFlow UI:
-       - System prompt (có {knowledge} placeholder)
-       - Empty response: {"errors": [], "note": "Không tìm thấy rule liên quan"}
+  1. Tạo 2 Assistant trong RAGFlow (cùng gắn Knowledge Base NĐ30):
+       - Assistant 1 "checker_manifest": dùng System Prompt cho chunk_000
+       - Assistant 2 "checker_format":   dùng System Prompt cho chunk_001...N
+  2. Cấu hình mỗi Assistant trong RAGFlow UI:
+       - System prompt tương ứng (có {knowledge} placeholder)
+       - Empty response: {"errors": [], "note": ""}
        - Temperature: 0.1
        - Similarity threshold: 0.3
        - Top N: 4
   3. Tạo file .env ở thư mục gốc project:
        RAGFLOW_BASE_URL=http://172.20.10.13
        RAGFLOW_API_KEY=ragflow-xxxxx
-       RAGFLOW_ASSISTANT_ID=5a59365a...
-  4. pip install requests
+       RAGFLOW_ASSISTANT_MANIFEST_ID=xxx   ← Assistant kiểm tra cấu trúc
+       RAGFLOW_ASSISTANT_FORMAT_ID=xxx     ← Assistant kiểm tra định dạng
 
 Cách chạy:
   python src/send_to_ragflow.py
@@ -46,9 +49,10 @@ except ImportError:
 # CẤU HÌNH
 # ══════════════════════════════════════════════════════════════════════
 
-RAGFLOW_BASE_URL = os.getenv("RAGFLOW_BASE_URL", "http://172.20.10.13")
-RAGFLOW_API_KEY  = os.getenv("RAGFLOW_API_KEY",  "")
-ASSISTANT_ID     = os.getenv("RAGFLOW_ASSISTANT_ID", "")
+RAGFLOW_BASE_URL      = os.getenv("RAGFLOW_BASE_URL", "http://172.20.10.13")
+RAGFLOW_API_KEY       = os.getenv("RAGFLOW_API_KEY", "")
+ASSISTANT_MANIFEST_ID = os.getenv("RAGFLOW_ASSISTANT_MANIFEST_ID", "")  # chunk_000
+ASSISTANT_FORMAT_ID   = os.getenv("RAGFLOW_ASSISTANT_FORMAT_ID", "")    # chunk_001...N
 
 DELAY_BETWEEN_CHUNKS = 0.5   # giây
 MAX_RETRIES          = 3
@@ -58,6 +62,17 @@ TIMEOUT_SECONDS      = 60
 # ══════════════════════════════════════════════════════════════════════
 # HÀM GỌI RAGFLOW API
 # ══════════════════════════════════════════════════════════════════════
+
+def pick_assistant(chunk: dict) -> tuple[str, str]:
+    """
+    Chọn assistant phù hợp dựa vào type của chunk.
+    Trả về (assistant_id, label) để log.
+    """
+    chunk_type = chunk.get("meta", {}).get("type", "content")
+    if chunk_type == "meta":
+        return ASSISTANT_MANIFEST_ID, "manifest"
+    return ASSISTANT_FORMAT_ID, "format"
+
 
 def create_session(http_session: requests.Session, assistant_id: str) -> str | None:
     """Tạo session mới — mỗi chunk dùng 1 session riêng tránh context nhiễm."""
@@ -77,25 +92,39 @@ def create_session(http_session: requests.Session, assistant_id: str) -> str | N
         return None
 
 
-def build_user_message(chunk: dict) -> str:
+def build_user_message(chunk: dict, total_chunks: int) -> str:
     """
     Xây dựng user message gửi vào RAGFlow.
-    Đơn giản: nêu doc_type + thứ tự chunk + nội dung.
+    chunk_000: gửi thẳng nội dung manifest.
+    chunk_001...N: bổ sung thêm thông tin định vị.
     """
-    meta     = chunk.get("meta", {})
-    filename = meta.get("filename", "")
-    order    = meta.get("order", "?")
-    total    = meta.get("total_chunks", "?")  # inject lúc gửi
-    doc_type = meta.get("doc_type", "văn bản hành chính")
+    meta       = chunk.get("meta", {})
+    filename   = meta.get("filename", "")
+    chunk_id   = meta.get("chunk_id", "")
+    chunk_type = meta.get("type", "content")
 
-    return (
-        f"Tài liệu: {filename}\n"
-        f"Loại văn bản: {doc_type}\n"
-        f"Chunk {order}/{total}\n"
-        f"\n"
-        f"--- NỘI DUNG ---\n"
-        f"{chunk.get('content', '')}"
-    )
+    if chunk_type == "meta":
+        # chunk_000 — nội dung đã đầy đủ, chỉ thêm tiêu đề nhiệm vụ
+        return (
+            f"Kiểm tra cấu trúc tổng thể văn bản:\n"
+            f"\n"
+            f"{chunk.get('content', '')}"
+        )
+    else:
+        # chunk_001...N — thêm thông tin định vị để LLM hiểu ngữ cảnh
+        order      = meta.get("order", "?")
+        para_idxs  = meta.get("para_idxs", [])
+        para_range = f"{para_idxs[0]}–{para_idxs[-1]}" if para_idxs else "?"
+
+        return (
+            f"Kiểm tra định dạng đoạn văn bản:\n"
+            f"Tài liệu : {filename}\n"
+            f"Chunk    : {chunk_id} ({order}/{total_chunks})\n"
+            f"PARA_ID  : {para_range}\n"
+            f"\n"
+            f"--- NỘI DUNG ---\n"
+            f"{chunk.get('content', '')}"
+        )
 
 
 def send_chunk(
@@ -103,12 +132,13 @@ def send_chunk(
     assistant_id: str,
     session_id: str,
     chunk: dict,
+    total_chunks: int,
 ) -> dict:
     """Gửi 1 chunk vào RAGFlow, trả về dict kết quả."""
     url     = f"{RAGFLOW_BASE_URL}/api/v1/chats/{assistant_id}/completions"
     meta    = chunk.get("meta", {})
     payload = {
-        "question":   build_user_message(chunk),
+        "question":   build_user_message(chunk, total_chunks),
         "stream":     False,
         "session_id": session_id,
     }
@@ -124,6 +154,7 @@ def send_chunk(
                 parsed = parse_llm_answer(answer)
                 return {
                     "chunk_id":   meta.get("chunk_id"),
+                    "chunk_type": meta.get("type", "content"),
                     "order":      meta.get("order"),
                     "para_idxs":  meta.get("para_idxs", []),
                     "raw_answer": answer,
@@ -145,6 +176,7 @@ def send_chunk(
 
     return {
         "chunk_id":   meta.get("chunk_id"),
+        "chunk_type": meta.get("type", "content"),
         "order":      meta.get("order"),
         "para_idxs":  meta.get("para_idxs", []),
         "raw_answer": None,
@@ -185,7 +217,7 @@ def parse_llm_answer(answer: str) -> dict:
 # ══════════════════════════════════════════════════════════════════════
 
 def process_chunks_file(chunks_path: Path, results_dir: Path) -> None:
-    """Đọc _chunks.json → gửi từng chunk theo thứ tự → lưu kết quả."""
+    """Đọc _chunks.json → gửi từng chunk đúng assistant → lưu kết quả."""
     print(f"🔄 Đang xử lý: {chunks_path.name}")
 
     with open(chunks_path, encoding="utf-8") as f:
@@ -195,11 +227,10 @@ def process_chunks_file(chunks_path: Path, results_dir: Path) -> None:
     chunks   = chunks_data.get("chunks", [])
     total    = len(chunks)
 
-    print(f"   📄 File: {filename} | {total} chunks\n")
-
-    # Inject total_chunks vào meta để build_user_message dùng
-    for c in chunks:
-        c["meta"]["total_chunks"] = total
+    # Đếm riêng meta vs content để log
+    n_meta    = sum(1 for c in chunks if c.get("meta", {}).get("type") == "meta")
+    n_content = total - n_meta
+    print(f"   📄 File: {filename} | {total} chunks ({n_meta} manifest + {n_content} nội dung)\n")
 
     http_session = requests.Session()
     http_session.headers.update({
@@ -207,33 +238,42 @@ def process_chunks_file(chunks_path: Path, results_dir: Path) -> None:
         "Content-Type":  "application/json",
     })
 
-    all_results  = []
-    total_errors = 0
-    failed       = 0
+    all_results           = []
+    total_errors          = 0
+    total_struct_errors   = 0   # lỗi từ chunk_000
+    total_format_errors   = 0   # lỗi từ chunk_001...N
+    failed                = 0
 
     for i, chunk in enumerate(chunks, 1):
-        meta  = chunk.get("meta", {})
-        cid   = meta.get("chunk_id", f"chunk_{i:03d}")
-        chars = len(chunk.get("content", ""))
+        meta       = chunk.get("meta", {})
+        cid        = meta.get("chunk_id", f"chunk_{i:03d}")
+        chars      = len(chunk.get("content", ""))
+        assistant_id, a_label = pick_assistant(chunk)
 
-        print(f"   [{i:02d}/{total}] {cid} ({chars} ký tự) ...", end=" ", flush=True)
+        print(f"   [{i:02d}/{total}] {cid} [{a_label}] ({chars} ký tự) ...", end=" ", flush=True)
 
-        sess_id = create_session(http_session, ASSISTANT_ID)
+        sess_id = create_session(http_session, assistant_id)
         if not sess_id:
             print("❌ Không tạo được session")
             failed += 1
             all_results.append({
-                "chunk_id": cid,
-                "order":    meta.get("order"),
-                "errors":   [],
-                "status":   "failed",
-                "note":     "Không tạo được session",
+                "chunk_id":   cid,
+                "chunk_type": meta.get("type", "content"),
+                "order":      meta.get("order"),
+                "errors":     [],
+                "status":     "failed",
+                "note":       "Không tạo được session",
             })
             continue
 
-        result = send_chunk(http_session, ASSISTANT_ID, sess_id, chunk)
+        result = send_chunk(http_session, assistant_id, sess_id, chunk, total)
         n_err  = len(result.get("errors", []))
         total_errors += n_err
+
+        if meta.get("type") == "meta":
+            total_struct_errors += n_err
+        else:
+            total_format_errors += n_err
 
         if result["status"] == "ok":
             print(f"✅ {n_err} lỗi")
@@ -246,11 +286,13 @@ def process_chunks_file(chunks_path: Path, results_dir: Path) -> None:
 
     # ── Lưu kết quả ──
     out = {
-        "filename":              filename,
-        "total_chunks":          total,
-        "total_semantic_errors": total_errors,
-        "failed_chunks":         failed,
-        "results":               all_results,
+        "filename":            filename,
+        "total_chunks":        total,
+        "total_errors":        total_errors,
+        "struct_errors":       total_struct_errors,   # lỗi cấu trúc/thiếu thành phần
+        "format_errors":       total_format_errors,   # lỗi định dạng font/lề/...
+        "failed_chunks":       failed,
+        "results":             all_results,
     }
 
     stem     = chunks_path.stem.replace("_chunks", "")
@@ -258,7 +300,10 @@ def process_chunks_file(chunks_path: Path, results_dir: Path) -> None:
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
 
-    print(f"\n   ✅ Xong! {total_errors} lỗi | {failed} chunk thất bại")
+    print(f"\n   ✅ Xong!")
+    print(f"      Lỗi cấu trúc : {total_struct_errors}")
+    print(f"      Lỗi định dạng: {total_format_errors}")
+    print(f"      Chunk thất bại: {failed}")
     print(f"   💾 Lưu: {out_path}\n")
 
 
@@ -267,13 +312,18 @@ def process_chunks_file(chunks_path: Path, results_dir: Path) -> None:
 # ══════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
+    # Kiểm tra config
     if not RAGFLOW_API_KEY:
-        print("❌ Thiếu RAGFLOW_API_KEY. Tạo file .env:")
+        print("❌ Thiếu RAGFLOW_API_KEY. Thêm vào file .env:")
         print("   RAGFLOW_API_KEY=ragflow-xxxxx")
         sys.exit(1)
-    if not ASSISTANT_ID:
-        print("❌ Thiếu RAGFLOW_ASSISTANT_ID. Tạo file .env:")
-        print("   RAGFLOW_ASSISTANT_ID=5a59365a...")
+    if not ASSISTANT_MANIFEST_ID:
+        print("❌ Thiếu RAGFLOW_ASSISTANT_MANIFEST_ID. Thêm vào file .env:")
+        print("   RAGFLOW_ASSISTANT_MANIFEST_ID=xxx")
+        sys.exit(1)
+    if not ASSISTANT_FORMAT_ID:
+        print("❌ Thiếu RAGFLOW_ASSISTANT_FORMAT_ID. Thêm vào file .env:")
+        print("   RAGFLOW_ASSISTANT_FORMAT_ID=xxx")
         sys.exit(1)
 
     parser = argparse.ArgumentParser(
