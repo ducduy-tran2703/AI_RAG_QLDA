@@ -1,8 +1,12 @@
 import uuid
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update
 from ...shared.models.user import User, Department
+from ...shared.models.system import SystemSetting, AuditLog, ApiKey
 from ...shared.auth import get_password_hash
+import secrets
+import hashlib
 from fastapi import HTTPException, status
 
 class AdminService:
@@ -66,7 +70,7 @@ class AdminService:
         user = await db.get(User, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="Người dùng không tồn tại")
-        update_data = data.dict(exclude_unset=True)
+        update_data = data.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(user, key, value)
         await db.commit()
@@ -101,3 +105,74 @@ class AdminService:
         await db.commit()
         # Trong thực tế sẽ gửi email, hiện tại trả về mật khẩu tạm
         return new_pw
+
+    # ---------- System Settings ----------
+    @staticmethod
+    async def get_settings(db: AsyncSession):
+        result = await db.execute(select(SystemSetting).order_by(SystemSetting.category, SystemSetting.label))
+        return result.scalars().all()
+
+    @staticmethod
+    async def update_setting(db: AsyncSession, key: str, value: str, user_id: uuid.UUID):
+        setting = await db.execute(select(SystemSetting).where(SystemSetting.key == key))
+        obj = setting.scalar_one_or_none()
+        if not obj:
+            raise HTTPException(status_code=404, detail="Không tìm thấy cấu hình")
+        if not obj.is_editable:
+            raise HTTPException(status_code=403, detail="Cấu hình này không thể chỉnh sửa")
+
+        obj.value = value
+        obj.updated_by = user_id
+        obj.updated_at = datetime.utcnow()
+        await db.commit()
+        return obj
+
+    # ---------- Audit Logs ----------
+    @staticmethod
+    async def get_audit_logs(db: AsyncSession, page: int = 1, limit: int = 50, action: str = None):
+        query = select(AuditLog)
+        if action:
+            query = query.where(AuditLog.action == action)
+
+        count_res = await db.execute(select(func.count()).select_from(query.subquery()))
+        total = count_res.scalar()
+
+        query = query.order_by(AuditLog.created_at.desc()).offset((page - 1) * limit).limit(limit)
+        result = await db.execute(query)
+        return result.scalars().all(), total
+
+    # ---------- API Keys ----------
+    @staticmethod
+    async def create_api_key(db: AsyncSession, user_id: uuid.UUID, name: str):
+        raw_key = f"rag_{secrets.token_urlsafe(32)}"
+        key_prefix = raw_key[:8]
+        key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+
+        new_key = ApiKey(
+            user_id=user_id,
+            name=name,
+            key_prefix=key_prefix,
+            key_hash=key_hash,
+            scopes=["read", "write"]
+        )
+        db.add(new_key)
+        await db.commit()
+        await db.refresh(new_key)
+
+        # We need to return the raw key once
+        return new_key, raw_key
+
+    @staticmethod
+    async def get_api_keys(db: AsyncSession, user_id: uuid.UUID):
+        result = await db.execute(select(ApiKey).where(ApiKey.user_id == user_id))
+        return result.scalars().all()
+
+    @staticmethod
+    async def revoke_api_key(db: AsyncSession, key_id: uuid.UUID, user_id: uuid.UUID):
+        key = await db.get(ApiKey, key_id)
+        if not key or key.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Không tìm thấy khóa")
+        key.is_active = False
+        key.revoked_at = datetime.utcnow()
+        await db.commit()
+        return True

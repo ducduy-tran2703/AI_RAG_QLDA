@@ -27,13 +27,21 @@ import {
   LayoutDashboard,
   ChevronLeft,
   Users, ClipboardList,
+  History, Key,
 } from 'lucide-react';
+import { Database, Gavel } from 'lucide-react';
+import NotificationBell from './NotificationBell';
+
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['OFFICER', 'LEADER', 'IT_ADMIN', 'BIZ_ADMIN'] },
   { name: 'Văn bản', href: '/documents', icon: FileText, roles: ['OFFICER', 'LEADER', 'IT_ADMIN', 'BIZ_ADMIN'] },
   { name: 'Chờ phê duyệt', href: '/pending-approvals', icon: ClipboardList, roles: ['LEADER'] },
   { name: 'Quản lý User', href: '/admin/users', icon: Users, roles: ['IT_ADMIN'] },
+  { name: 'Nhật ký hệ thống', href: '/admin/audit-logs', icon: History, roles: ['IT_ADMIN'] },
+  { name: 'Cổng API', href: '/developer', icon: Key, roles: ['IT_ADMIN', 'BIZ_ADMIN'] },
+  { name: 'Cơ sở tri thức', href: '/knowledge', icon: Database, roles: ['BIZ_ADMIN', 'IT_ADMIN'] },
+  { name: 'Bộ quy tắc', href: '/rules', icon: Gavel, roles: ['BIZ_ADMIN', 'IT_ADMIN'] },
 ];
 
 export default function ModernLayout() {
@@ -149,7 +157,9 @@ export default function ModernLayout() {
             </SheetContent>
           </Sheet>
           <div className="flex-1" />
-          {/* Có thể thêm các nút hành động khác */}
+          <div className="flex items-center gap-2">
+            <NotificationBell />
+          </div>
         </header>
 
         {/* Page content */}

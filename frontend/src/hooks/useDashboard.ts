@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import api from '../lib/api';
+import { analyticsApi } from '../lib/api';
 
 export interface DashboardData {
   total_documents: number;
@@ -14,8 +14,18 @@ export function useDashboard() {
   return useQuery({
     queryKey: ['dashboard'],
     queryFn: async () => {
-      const res = await api.get('/analytics/dashboard');
+      const res = await analyticsApi.getDashboard();
       return res.data as DashboardData;
     },
   });
 }
+
+export const useDashboardStats = () => {
+  return useQuery({
+    queryKey: ['dashboard-stats'],
+    queryFn: async () => {
+      const res = await analyticsApi.getDashboard();
+      return res.data;
+    },
+  });
+};

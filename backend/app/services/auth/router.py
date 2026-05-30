@@ -10,6 +10,8 @@ from .schemas import (
 )
 from .dependencies import get_current_active_user
 from ...shared.models.user import User
+from ...shared.auth import decode_token, create_access_token
+from uuid import UUID
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 

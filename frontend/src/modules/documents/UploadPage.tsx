@@ -1,8 +1,12 @@
 import { useState, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useDropzone } from 'react-dropzone';
 import { useUploadDocument } from '../../hooks/useDocuments';
 import { useCheckProgress } from '../../hooks/useWebSocket';
+import { FileUploadZone } from '@/components/ui/FileUploadZone';
+import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { CheckCircle2, Loader2, ArrowRight } from 'lucide-react';
 
 export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -19,14 +23,7 @@ export default function UploadPage() {
     if (acceptedFiles.length > 0) setFile(acceptedFiles[0]);
   }, []);
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: {
-      'application/pdf': ['.pdf'],
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
-    },
-    maxFiles: 1,
-  });
+  const onRemove = () => setFile(null);
 
   // Nhận progress từ WebSocket
   useCheckProgress(
@@ -34,7 +31,7 @@ export default function UploadPage() {
     (data) => setProgress({ stage: data.stage, percent: data.percent }),
     (data) => {
       setComplete(true);
-      setResultId(data.result_id);  // Lưu result_id từ sự kiện complete
+      setResultId(data.result_id);
       setProgress({ stage: 'done', percent: 100 });
     }
   );
@@ -54,63 +51,81 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="max-w-xl mx-auto">
-      <h2 className="text-2xl font-bold mb-4">Upload văn bản mới</h2>
-
-      <div
-        {...getRootProps()}
-        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer ${
-          isDragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
-        }`}
-      >
-        <input {...getInputProps()} />
-        {file ? (
-          <p className="text-green-600">{file.name} ({(file.size / 1024).toFixed(1)} KB)</p>
-        ) : (
-          <p className="text-gray-500">Kéo thả file .docx hoặc .pdf vào đây, hoặc nhấn để chọn</p>
-        )}
+    <div className="max-w-2xl mx-auto space-y-6">
+      <div className="space-y-2">
+        <h2 className="text-3xl font-bold tracking-tight">Kiểm tra văn bản mới</h2>
+        <p className="text-muted-foreground">Tải lên văn bản hành chính để AI phân tích và phát hiện lỗi thể thức</p>
       </div>
 
-      {checkId && (
-        <div className="mt-4">
-          <div className="bg-gray-200 rounded-full h-4">
-            <div
-              className="bg-blue-600 h-4 rounded-full transition-all"
-              style={{ width: `${progress.percent}%` }}
-            />
-          </div>
-          <p className="text-sm mt-1">
-            {progress.stage === 'done' ? 'Hoàn tất!' : `Đang xử lý: ${progress.stage}`}
-          </p>
-        </div>
-      )}
+      <Card>
+        <CardContent className="pt-6">
+          {!checkId ? (
+            <div className="space-y-6">
+              <FileUploadZone
+                onDrop={onDrop}
+                files={file ? [file] : []}
+                onRemove={onRemove}
+                accept={{
+                  'application/pdf': ['.pdf'],
+                  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+                }}
+                multiple={false}
+              />
 
-      <div className="mt-4 flex gap-2">
-        <button
-          onClick={handleUpload}
-          disabled={!file || uploading}
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
-        >
-          {uploading && !checkId ? 'Đang upload...' : 'Upload & Kiểm tra'}
-        </button>
-        <button
-          onClick={() => navigate('/documents')}
-          className="bg-gray-300 px-4 py-2 rounded hover:bg-gray-400"
-        >
-          Hủy
-        </button>
-      </div>
+              <div className="flex gap-2 justify-end">
+                <Button variant="ghost" onClick={() => navigate('/documents')}>Hủy</Button>
+                <Button onClick={handleUpload} disabled={!file || uploading}>
+                  {uploading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Đang tải lên...
+                    </>
+                  ) : 'Bắt đầu kiểm tra'}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="py-8 space-y-6 text-center">
+              <div className="space-y-2">
+                <h3 className="text-xl font-semibold">
+                  {complete ? 'Kiểm tra hoàn tất!' : 'Đang phân tích văn bản...'}
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  {progress.stage === 'done' ? 'Hệ thống đã xử lý xong' : `Giai đoạn: ${progress.stage}`}
+                </p>
+              </div>
 
-      {complete && resultId && (
-        <div className="mt-4">
-          <Link
-            to={`/checks/${resultId}`}
-            className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 inline-block"
-          >
-            Xem kết quả chi tiết
-          </Link>
-        </div>
-      )}
+              <div className="px-12">
+                <Progress value={progress.percent} className="h-3" />
+                <p className="text-xs mt-2 text-muted-foreground font-mono">{progress.percent}%</p>
+              </div>
+
+              {complete && resultId ? (
+                <div className="pt-4 animate-in fade-in zoom-in duration-500">
+                  <div className="bg-green-50 text-green-700 p-4 rounded-lg flex items-center justify-center gap-2 mb-6">
+                    <CheckCircle2 className="h-5 w-5" />
+                    <span className="font-medium">AI đã hoàn thành báo cáo lỗi cho văn bản của bạn</span>
+                  </div>
+                  <Button size="lg" className="w-full" asChild>
+                    <Link to={`/checks/${resultId}`}>
+                      Xem kết quả chi tiết <ArrowRight className="ml-2 h-4 w-4" />
+                    </Link>
+                  </Button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-4 gap-2 px-12">
+                  {[30, 65, 90, 100].map((step, idx) => (
+                    <div
+                      key={idx}
+                      className={`h-1 rounded-full ${progress.percent >= step ? 'bg-primary' : 'bg-muted'}`}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

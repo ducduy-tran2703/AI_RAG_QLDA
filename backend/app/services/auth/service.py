@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
+from sqlalchemy.orm import selectinload
 from ...shared.auth import (
     verify_password, get_password_hash,
     create_access_token, create_refresh_token, decode_token
@@ -16,7 +17,11 @@ from ...shared.database import async_session_maker
 class AuthService:
     @staticmethod
     async def authenticate(db: AsyncSession, email: str, password: str) -> User | None:
-        result = await db.execute(select(User).where(User.email == email))
+        result = await db.execute(
+            select(User)
+            .options(selectinload(User.department))
+            .where(User.email == email)
+        )
         user = result.scalar_one_or_none()
         if not user or not user.password_hash:
             return None
@@ -62,12 +67,15 @@ class AuthService:
         )
         db.add(user)
         await db.commit()
-        await db.refresh(user)
-        return user
+        return await AuthService.get_user_by_id(db, user.id)
 
     @staticmethod
     async def get_user_by_id(db: AsyncSession, user_id: uuid.UUID) -> User | None:
-        result = await db.execute(select(User).where(User.id == user_id))
+        result = await db.execute(
+            select(User)
+            .options(selectinload(User.department))
+            .where(User.id == user_id)
+        )
         return result.scalar_one_or_none()
 
     @staticmethod
@@ -77,8 +85,7 @@ class AuthService:
             setattr(user, key, value)
         user.updated_at = datetime.now(timezone.utc)
         await db.commit()
-        await db.refresh(user)
-        return user
+        return await AuthService.get_user_by_id(db, user.id)
 
     @staticmethod
     async def change_password(db: AsyncSession, user: User, current_password: str, new_password: str) -> bool:

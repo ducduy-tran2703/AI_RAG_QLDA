@@ -78,44 +78,6 @@ class DocumentService:
         return doc
 
     @staticmethod
-    async def get_documents(
-        db: AsyncSession,
-        user: User,
-        page: int = 1,
-        limit: int = 20,
-        folder_id: Optional[uuid.UUID] = None,
-        search: Optional[str] = None,
-        file_type: Optional[str] = None,
-        sort: str = "created_at",
-        order: str = "desc"
-    ):
-        query = select(Document).where(Document.user_id == user.id, Document.is_deleted == False)
-        if folder_id is not None:
-            query = query.where(Document.folder_id == folder_id)
-        if search:
-            query = query.where(Document.display_name.ilike(f"%{search}%"))
-        if file_type:
-            query = query.where(Document.file_type == file_type)
-        
-        # Đếm tổng
-        count_query = select(func.count()).select_from(query.subquery())
-        total = (await db.execute(count_query)).scalar()
-        
-        # Sắp xếp
-        if order == "asc":
-            query = query.order_by(getattr(Document, sort).asc())
-        else:
-            query = query.order_by(getattr(Document, sort).desc())
-        
-        # Phân trang
-        offset = (page - 1) * limit
-        query = query.offset(offset).limit(limit)
-        result = await db.execute(query)
-        documents = result.scalars().all()
-        
-        return documents, total
-
-    @staticmethod
     async def get_document(db: AsyncSession, document_id: uuid.UUID, user: User) -> Document:
         result = await db.execute(
             select(Document).where(Document.id == document_id, Document.user_id == user.id, Document.is_deleted == False)
@@ -128,7 +90,9 @@ class DocumentService:
     @staticmethod
     async def update_document(db: AsyncSession, document_id: uuid.UUID, user: User, data: DocumentUpdateRequest):
         doc = await DocumentService.get_document(db, document_id, user)
-        for field, value in data.dict(exclude_unset=True).items():
+        update_data = data.model_dump(exclude_unset=True)
+        # Xử lý folder_id đặc biệt: nếu là None và được gửi lên thì set về None
+        for field, value in update_data.items():
             setattr(doc, field, value)
         doc.updated_at = datetime.utcnow()
         await db.commit()
@@ -160,12 +124,113 @@ class DocumentService:
 
     @staticmethod
     async def get_folders(db: AsyncSession, user: User):
-        print(f"[{datetime.now()}] [GET FOLDERS] User ID: {user.id}")
         result = await db.execute(
             select(DocumentFolder).where(DocumentFolder.user_id == user.id).order_by(DocumentFolder.name)
         )
-        folders = result.scalars().all()
-        print(f"[{datetime.now()}] [GET FOLDERS] Retrieved {len(folders)} folders for user {user.id}")
-        for folder in folders:
-            print(f"[{datetime.now()}] [GET FOLDERS] Folder: id={folder.id}, name={folder.name}, user_id={folder.user_id}")
-        return folders
+        return result.scalars().all()
+
+    @staticmethod
+    async def update_folder(db: AsyncSession, folder_id: uuid.UUID, user: User, data: FolderUpdateRequest):
+        folder = await db.get(DocumentFolder, folder_id)
+        if not folder or folder.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Không tìm thấy thư mục")
+        update_data = data.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(folder, key, value)
+        await db.commit()
+        await db.refresh(folder)
+        return folder
+
+    @staticmethod
+    async def delete_folder(db: AsyncSession, folder_id: uuid.UUID, user: User):
+        folder = await db.get(DocumentFolder, folder_id)
+        if not folder or folder.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Không tìm thấy thư mục")
+        # Kiểm tra có document nào trong folder không
+        doc_count = await db.execute(
+            select(func.count()).select_from(Document).where(
+                Document.folder_id == folder_id,
+                Document.is_deleted == False
+            )
+        )
+        count = doc_count.scalar()
+        if count > 0:
+            raise HTTPException(status_code=400, detail=f"Không thể xóa thư mục có {count} văn bản. Vui lòng di chuyển văn bản trước.")
+        await db.delete(folder)
+        await db.commit()
+        return True
+
+    @staticmethod
+    async def get_documents(
+        db: AsyncSession,
+        user: User,
+        page: int = 1,
+        limit: int = 20,
+        folder_id: Optional[uuid.UUID] = None,
+        search: Optional[str] = None,
+        file_type: Optional[str] = None,
+        sort: str = "created_at",
+        order: str = "desc"
+    ):
+        query = select(Document).where(Document.user_id == user.id, Document.is_deleted == False)
+        if folder_id is not None:
+            query = query.where(Document.folder_id == folder_id)
+        if search:
+            query = query.where(Document.display_name.ilike(f"%{search}%"))
+        if file_type:
+            query = query.where(Document.file_type == file_type)
+        
+        # Đếm tổng
+        count_query = select(func.count()).select_from(query.subquery())
+        total = (await db.execute(count_query)).scalar()
+        
+        # Sắp xếp
+        sort_column = getattr(Document, sort, Document.created_at)
+        if order == "asc":
+            query = query.order_by(sort_column.asc())
+        else:
+            query = query.order_by(sort_column.desc())
+        
+        # Phân trang
+        offset = (page - 1) * limit
+        query = query.offset(offset).limit(limit)
+        result = await db.execute(query)
+        documents = result.scalars().all()
+        
+        return documents, total
+
+    @staticmethod
+    async def create_version(db: AsyncSession, doc: Document, file: UploadFile, user: User, change_notes: Optional[str] = None):
+        import hashlib
+        
+        # Lấy version_number hiện tại
+        result = await db.execute(
+            select(func.max(DocumentVersion.version_number))
+            .where(DocumentVersion.document_id == doc.id)
+        )
+        max_version = result.scalar() or 0
+        new_version = max_version + 1
+        
+        # Đọc nội dung file
+        content = await file.read()
+        sha256_hash = hashlib.sha256(content).hexdigest()
+        object_key = f"{user.id}/{doc.id}/v{new_version}_{file.filename}"
+        
+        # Upload lên MinIO
+        from ...shared.storage import upload_file as storage_upload
+        await storage_upload(object_key, content, doc.mime_type)
+        
+        version = DocumentVersion(
+            document_id=doc.id,
+            version_number=new_version,
+            version_label=f"v{new_version}",
+            minio_object_key=object_key,
+            file_size_bytes=len(content),
+            checksum_sha256=sha256_hash,
+            change_notes=change_notes,
+            created_by=user.id,
+        )
+        db.add(version)
+        await db.commit()
+        await db.refresh(version)
+        return version

@@ -11,6 +11,11 @@ import ProfilePage from '../modules/profile/ProfilePage';
 import SettingsPage from '../modules/profile/SettingsPage';
 import ModernLayout from '../components/layout/ModernLayout';
 import ProtectedRoute from '../components/ProtectedRoute';
+import KnowledgePage from '../modules/knowledge/KnowledgePage';
+import RuleSetPage from '../modules/rules/RuleSetPage';
+import RuleDetailPage from '../modules/rules/RuleDetailPage';
+import AuditLogPage from '../modules/admin/AuditLogPage';
+import DeveloperPortal from '../modules/developer/DeveloperPortal';
 
 const router = createBrowserRouter([
   {
@@ -64,6 +69,26 @@ const router = createBrowserRouter([
       {
         path: 'settings',
         element: <SettingsPage />,
+      },
+      {
+        path: 'admin/audit-logs',
+        element: <AuditLogPage />,
+      },
+      {
+        path: 'developer',
+        element: <DeveloperPortal />,
+      },
+      {
+        path: 'knowledge',
+        element: <KnowledgePage />,
+      },
+      {
+        path: 'rules',
+        element: <RuleSetPage />,
+      },
+      {
+        path: 'rules/:id',
+        element: <RuleDetailPage />,
       },
     ],
   },
