@@ -64,15 +64,15 @@ def build_llm_text(json_data: dict) -> str:
     doc_type_vi = DOC_TYPE_VI.get(doc_type, doc_type)
 
     # ── Thông tin tài liệu ───────────────────────────────────────────
-    lines.append(f"📄 TÀI LIỆU: {filename}")
-    lines.append(f"📎 NGUỒN: {source} | LOẠI VĂN BẢN: {doc_type_vi}")
+    lines.append(f"TÀI LIỆU: {filename}")
+    lines.append(f"NGUỒN: {source} | LOẠI VĂN BẢN: {doc_type_vi}")
 
     ps = json_data.get("page_size", {})
     if ps:
         parts = []
         if "width_cm"  in ps: parts.append(f"Rộng {ps['width_cm']}cm")
         if "height_cm" in ps: parts.append(f"Cao {ps['height_cm']}cm")
-        lines.append(f"📐 KHỔ GIẤY: {', '.join(parts)}")
+        lines.append(f"KHỔ GIẤY: {', '.join(parts)}")
 
     m = json_data.get("margins", {})
     if m:
@@ -81,7 +81,7 @@ def build_llm_text(json_data: dict) -> str:
         if "bottom_cm" in m: parts.append(f"Dưới {m['bottom_cm']}cm")
         if "left_cm"   in m: parts.append(f"Trái {m['left_cm']}cm")
         if "right_cm"  in m: parts.append(f"Phải {m['right_cm']}cm")
-        lines.append(f"📌 LỀ TRANG: {', '.join(parts)}")
+        lines.append(f"LỀ TRANG: {', '.join(parts)}")
 
     pn = json_data.get("page_number", {})
     if pn:
@@ -90,7 +90,7 @@ def build_llm_text(json_data: dict) -> str:
         if "align"   in pn: parts.append(f"Canh {pn['align']}")
         if "pos"     in pn: parts.append(f"Vị trí {pn['pos']}")
         if pn.get("hidden_p1"): parts.append("Ẩn số trang đầu")
-        lines.append(f"📌 SỐ TRANG: {' | '.join(parts)}")
+        lines.append(f"SỐ TRANG: {' | '.join(parts)}")
 
     lines.append("\n" + "=" * 50)
     lines.append("NỘI DUNG VĂN BẢN")

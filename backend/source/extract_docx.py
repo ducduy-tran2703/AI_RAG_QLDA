@@ -650,6 +650,65 @@ def _extract_table_paragraphs(doc: Document, start_idx: int,
     return paragraphs
 
 
+import re as _re  # re đã import ở trên nếu có, dùng alias để an toàn
+
+# ═════════════════════════════════════════════════════════════════════
+# HELPER: Cắt vùng chữ ký / dấu mộc cuối văn bản
+# ═════════════════════════════════════════════════════════════════════
+
+_SIGNATURE_PATTERNS = _re.compile(
+    r"TM\.\s*ỦY\s*BAN|TM\.\s*BỘ\s*TRƯỞNG|TM\.\s*CHÍNH\s*PHỦ"
+    r"|KT\.\s*CHỦ\s*TỊCH|KT\.\s*BỘ\s*TRƯỞNG|KT\.\s*THỦ\s*TƯỚNG"
+    r"|THỪA\s*ỦY\s*QUYỀN|THỪA\s*LỆNH"
+    r"|TM\.\s*BAN\s*CHẤP\s*HÀNH|TM\.\s*HỘI\s*ĐỒNG"
+    r"|CHỦ\s*TỊCH\s*UBND|CHỦ\s*TỊCH\s*HỘI\s*ĐỒNG",
+    _re.IGNORECASE | _re.UNICODE,
+)
+
+_TINY_FONT_MAX_PT = 8.0
+
+
+def _drop_signature_zone(paragraphs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Loại bỏ vùng chữ ký / dấu mộc / mã nội bộ cuối văn bản (docx).
+
+    Chiến lược:
+    1. Font < 8pt → drop ngay (mã nội bộ)
+    2. Khi gặp paragraph RIGHT_COL khớp _SIGNATURE_PATTERNS
+       → lưu cut_idx, drop tất cả paragraph RIGHT_COL có idx >= cut_idx
+    3. LEFT_COL (Nơi nhận, v.v.) không bị drop
+    """
+    # Bước 1: lọc font nhỏ
+    result = []
+    for p in paragraphs:
+        runs = p.get('runs', [])
+        if runs:
+            sizes = []
+            for r in runs:
+                m = _re.search(r'(\d+(?:\.\d+)?)pt', r.get('fmt', ''))
+                if m:
+                    sizes.append(float(m.group(1)))
+            if sizes and max(sizes) < _TINY_FONT_MAX_PT:
+                continue
+        result.append(p)
+
+    # Bước 2: tìm cut_idx — idx nhỏ nhất của paragraph RIGHT_COL khớp pattern
+    cut_idx = None
+    for p in result:
+        if p.get('zone') == 'RIGHT_COL' and _SIGNATURE_PATTERNS.search(p.get('text', '')):
+            if cut_idx is None or p['idx'] < cut_idx:
+                cut_idx = p['idx']
+
+    if cut_idx is None:
+        return result
+
+    # Bước 3: drop RIGHT_COL từ cut_idx trở đi
+    return [
+        p for p in result
+        if not (p.get('zone') == 'RIGHT_COL' and p['idx'] >= cut_idx)
+    ]
+
+
 # ═════════════════════════════════════════════════════════════════════
 # PUBLIC API
 # ═════════════════════════════════════════════════════════════════════
@@ -724,6 +783,9 @@ def extract_docx_optimized(docx_path: str) -> Dict[str, Any]:
     )
     paragraphs.extend(table_paras)
 
+    # ── Cắt vùng chữ ký / dấu mộc cuối văn bản ────────────────────────
+    paragraphs = _drop_signature_zone(paragraphs)
+
     # ── Phát hiện loại văn bản ─────────────────────────────────────────
     para_texts = [p.get('text', '') for p in paragraphs]
     doc_type   = _detect_doc_type(para_texts, filename=path.name)
@@ -761,7 +823,7 @@ def save_report(report: dict, output_path: str):
 if __name__ == '__main__':
     import sys
     
-    input_dir  = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('uploads')
+    input_dir  = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('data/groundtruth')
     output_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else Path('output')
     output_dir.mkdir(parents=True, exist_ok=True)
     

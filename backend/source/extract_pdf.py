@@ -753,6 +753,81 @@ def _match_borders_to_paragraphs(paragraphs: list, rules: list, tolerance_pt: fl
 
 
 # ═════════════════════════════════════════════════════════════════════
+# HELPER: Cắt vùng chữ ký / dấu mộc cuối văn bản
+# ═════════════════════════════════════════════════════════════════════
+
+# Pattern nhận dạng ranh giới vùng ký — xuất hiện trong văn bản hành chính VN
+_SIGNATURE_PATTERNS = re.compile(
+    r"TM\.\s*ỦY\s*BAN|TM\.\s*BỘ\s*TRƯỞNG|TM\.\s*CHÍNH\s*PHỦ"
+    r"|KT\.\s*CHỦ\s*TỊCH|KT\.\s*BỘ\s*TRƯỞNG|KT\.\s*THỦ\s*TƯỚNG"
+    r"|THỪA\s*ỦY\s*QUYỀN|THỪA\s*LỆNH"
+    r"|TM\.\s*BAN\s*CHẤP\s*HÀNH|TM\.\s*HỘI\s*ĐỒNG"
+    r"|CHỦ\s*TỊCH\s*UBND|CHỦ\s*TỊCH\s*HỘI\s*ĐỒNG",
+    re.IGNORECASE | re.UNICODE,
+)
+
+_TINY_FONT_MAX_PT = 8.0   # font < 8pt → mã nội bộ, không phải nội dung
+
+
+def _drop_signature_zone(paragraphs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Loại bỏ vùng chữ ký / dấu mộc / mã nội bộ cuối văn bản.
+
+    Chiến lược kết hợp:
+    1. Font < 8pt → drop ngay (mã nội bộ kiểu TC_VP7_TCBM_xxx)
+    2. Khi gặp paragraph RIGHT_COL khớp _SIGNATURE_PATTERNS
+       → đánh dấu cut_page + cut_y, drop tất cả paragraph cùng trang
+       có y_pt >= cut_y VÀ zone == RIGHT_COL (tên người ký, chức danh)
+    3. Paragraph LEFT_COL thuộc vùng "Nơi nhận" không bị drop
+       (vẫn cần kiểm tra thể thức)
+    """
+    # Bước 1: lọc font nhỏ (mã nội bộ)
+    result = []
+    for p in paragraphs:
+        spans = p.get('spans', [])
+        if spans:
+            # Lấy size pt từ fmt string, VD "Times-5pt" → 5
+            sizes = []
+            for sp in spans:
+                m = re.search(r'-(\d+(?:\.\d+)?)pt', sp.get('fmt', ''))
+                if m:
+                    sizes.append(float(m.group(1)))
+            if sizes and max(sizes) < _TINY_FONT_MAX_PT:
+                continue   # drop: font quá nhỏ
+        result.append(p)
+
+    # Bước 2: tìm ranh giới vùng ký theo trang
+    # cut_map: {page_num: cut_y_pt}
+    cut_map: Dict[int, float] = {}
+    for p in result:
+        text     = p.get('text', '')
+        zone     = p.get('zone', 'FULL_WIDTH')
+        page_num = p.get('page', 0)
+        y_pt     = p.get('block', {}).get('y_pt', 0)
+
+        if zone == 'RIGHT_COL' and _SIGNATURE_PATTERNS.search(text):
+            # Chỉ cập nhật nếu chưa có hoặc y nhỏ hơn (lấy ranh giới cao nhất)
+            if page_num not in cut_map or y_pt < cut_map[page_num]:
+                cut_map[page_num] = y_pt
+
+    if not cut_map:
+        return result   # Không tìm thấy vùng ký → giữ nguyên
+
+    # Bước 3: drop các paragraph RIGHT_COL nằm trong vùng ký
+    filtered = []
+    for p in result:
+        page_num = p.get('page', 0)
+        zone     = p.get('zone', 'FULL_WIDTH')
+        y_pt     = p.get('block', {}).get('y_pt', 0)
+
+        if page_num in cut_map and zone == 'RIGHT_COL' and y_pt >= cut_map[page_num]:
+            continue   # drop: nằm trong vùng ký bên phải
+        filtered.append(p)
+
+    return filtered
+
+
+# ═════════════════════════════════════════════════════════════════════
 # PUBLIC API
 # ═════════════════════════════════════════════════════════════════════
 def extract_pdf_optimized(pdf_path: str, max_pages: int = None) -> Dict[str, Any]:
@@ -838,6 +913,9 @@ def extract_pdf_optimized(pdf_path: str, max_pages: int = None) -> Dict[str, Any
     if all_rules:
         _match_borders_to_paragraphs(all_paragraphs, all_rules)
 
+    # ── Cắt vùng chữ ký / dấu mộc cuối văn bản ────────────────────────
+    all_paragraphs = _drop_signature_zone(all_paragraphs)
+
     # ── Phát hiện loại văn bản ─────────────────────────────────────────
     para_texts = [p.get('text', '') for p in all_paragraphs]
     doc_type   = _detect_doc_type(para_texts, filename=path.name)
@@ -878,7 +956,7 @@ def save_report(report: dict, output_path: str):
 if __name__ == '__main__':
     import sys
     
-    input_dir  = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('uploads')
+    input_dir  = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('data/groundtruth')
     output_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else Path('output')
     output_dir.mkdir(parents=True, exist_ok=True)
     
