@@ -818,6 +818,17 @@ def save_report(report: dict, output_path: str):
 
 
 # ═════════════════════════════════════════════════════════════════════
+# WRAPPER FUNCTION - Dùng cho pipeline backend
+# ═════════════════════════════════════════════════════════════════════
+
+def extract_docx_to_dict(file_path: str) -> dict:
+    """
+    Extract .docx file và trả về dict.
+    Dùng cho pipeline backend (import được).
+    """
+    return extract_docx_optimized(file_path)
+
+# ═════════════════════════════════════════════════════════════════════
 # CLI RUNNER
 # ═════════════════════════════════════════════════════════════════════
 if __name__ == '__main__':

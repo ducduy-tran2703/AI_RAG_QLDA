@@ -29,7 +29,9 @@ class Document(Base):
     # Relationships
     owner = relationship("User", back_populates="documents")
     folder = relationship("DocumentFolder", back_populates="documents")
-    versions = relationship("DocumentVersion", back_populates="document", order_by="DocumentVersion.version_number")
+    versions = relationship("DocumentVersion", back_populates="document", cascade="all, delete-orphan", order_by="DocumentVersion.version_number")
+    # Thêm relationship check_results với cascade delete
+    check_results = relationship("CheckResult", back_populates="document", cascade="all, delete-orphan")
 
 class DocumentFolder(Base):
     __tablename__ = "document_folders"
