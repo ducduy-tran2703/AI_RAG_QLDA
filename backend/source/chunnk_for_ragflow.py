@@ -136,42 +136,7 @@ _DOC_TYPE_TITLE = {
     "vbhn":               "VĂN BẢN HỢP NHẤT",
 }
 
-# Pattern nhận dạng cấu trúc phân cấp — hỗ trợ cả luật/NĐ lẫn công văn/TT
-# Luật/NĐ/TT: Chương, Mục, Điều
-# Công văn/hướng dẫn: Phần (I/II/...), Khoản (1/2/...), Điểm (a/b/...), Tiết (6.1/...)
-_RE_CHUONG = re.compile(r"^Chương\s+([IVXLCDM]+|\d+)\b", re.IGNORECASE)
-_RE_MUC    = re.compile(r"^Mục\s+(\d+)\b",                re.IGNORECASE)
-_RE_DIEU   = re.compile(r"^Điều\s+(\d+)\b",               re.IGNORECASE)
-_RE_PHAN   = re.compile(r"^[Pp]hần\s+([IVXLCDM]+|\d+)\b")
-_RE_KHOAN  = re.compile(r"^[Kk]hoản\s+(\d+)\b")
-_RE_DIEM   = re.compile(r"^[Đđ]iểm\s+(\d+|[a-z])\b")
-_RE_TIET   = re.compile(r"^[Tt]iết\s+(\d+(?:\.\d+)*)\b")
-# Dạng số đầu dòng cho công văn: "1.", "2.", "1.1.", "8.2."
-# Fix bug 1: bỏ giới hạn chữ HOA — mục có thể bắt đầu chữ thường
-# Fix bug 2: dùng [ \t]+ cho phép nhiều khoảng trắng ("8.  Bổ sung")
-_RE_SO_DAU_DONG = re.compile(r"^(\d+(?:\.\d+)*)\.[ \t]+\S")
 
-
-def _roman_to_int(s: str) -> int:
-    """Chuyển số La Mã đơn giản sang int (dùng cho Chương)."""
-    val = {'I':1,'V':5,'X':10,'L':50,'C':100,'D':500,'M':1000}
-    s = s.upper()
-    result = 0
-    for i, ch in enumerate(s):
-        if ch not in val:
-            return 0
-        cur = val[ch]
-        nxt = val[s[i+1]] if i+1 < len(s) else 0
-        result += cur if cur >= nxt else -cur
-    return result
-
-
-def _to_int(s: str) -> int:
-    """Chuyển số La Mã hoặc Ả Rập sang int."""
-    try:
-        return int(s)
-    except ValueError:
-        return _roman_to_int(s)
 
 
 def build_meta_chunk(txt_content: str, json_data: dict, filename: str,
@@ -179,8 +144,7 @@ def build_meta_chunk(txt_content: str, json_data: dict, filename: str,
     """
     Tạo chunk_000 — chunk đặc biệt chứa:
       1. Thành phần bắt buộc (quốc hiệu, tiêu ngữ, tên loại VB, số ký hiệu...)
-      2. Cây thứ tự cấu trúc (Chương → Điều với PARA_ID)
-      3. Thông số trang (lề, khổ giấy, số trang)
+      2. Thông số trang (lề, khổ giấy, số trang)
 
     LLM dùng chunk này để kiểm tra toàn cục mà không cần đọc lại từng chunk.
     """
@@ -289,100 +253,7 @@ def build_meta_chunk(txt_content: str, json_data: dict, filename: str,
                         found["trich_yeu"] = f"PARA_ID={idx+1}"
 
 
-    # ── 2. Dựng cây thứ tự cấu trúc ─────────────────────────────────
-    struct_lines  = []
-    warnings      = []
-
-    prev_chuong = 0
-    prev_dieu   = 0
-    prev_muc    = 0
-    has_chuong  = False
-
-    for p in paragraphs:
-        idx  = p.get("idx", 0)
-        text = p.get("text", "").strip()
-
-        # Lấy text thuần từ dòng đầu tiên (bỏ nhãn format [fmt]: "...")
-        # Vì parse_paragraphs giữ nguyên cả dòng header [PARA_ID=N | ...]
-        # và các dòng "- [fmt]: text" — cần lấy text thực để match regex
-        raw_text = text
-        # Thử lấy nội dung sau '- [...]:'
-        m_content = re.search(r'^-\s*\[[^\]]*\]:\s*"(.+)"', text, re.MULTILINE)
-        if m_content:
-            raw_text = m_content.group(1).strip()
-
-        mc  = _RE_CHUONG.match(raw_text)
-        mm  = _RE_MUC.match(raw_text)
-        md  = _RE_DIEU.match(raw_text)
-        mp  = _RE_PHAN.match(raw_text)
-        mk  = _RE_KHOAN.match(raw_text)
-        mdi = _RE_DIEM.match(raw_text)
-        mt  = _RE_TIET.match(raw_text)
-        ms  = _RE_SO_DAU_DONG.match(raw_text)
-
-        if mc:
-            num = _to_int(mc.group(1))
-            has_chuong = True
-            label = f"Chương {mc.group(1)}"
-            if num != prev_chuong + 1 and prev_chuong > 0:
-                warnings.append(
-                    f"LƯU Ý: {label} (PARA_ID={idx}): nhảy từ Chương {prev_chuong} sang {num}"
-                )
-            struct_lines.append(f"  {label:<14} → PARA_ID={idx}")
-            prev_chuong = num
-            prev_dieu   = 0
-            prev_muc    = 0
-
-        elif mp:
-            label = f"Phần {mp.group(1)}"
-            struct_lines.append(f"  {label:<14} → PARA_ID={idx}")
-            prev_muc  = 0  # Fix bug 3: reset bộ đếm mục khi sang Phần mới
-            prev_dieu = 0
-
-        elif mm:
-            num   = _to_int(mm.group(1))
-            label = f"Mục {mm.group(1)}"
-            if num != prev_muc + 1 and prev_muc > 0:
-                warnings.append(
-                    f"LƯU Ý: {label} (PARA_ID={idx}): nhảy từ Mục {prev_muc} sang {num}"
-                )
-            struct_lines.append(f"    {label:<12} → PARA_ID={idx}")
-            prev_muc  = num
-            prev_dieu = 0
-
-        elif md:
-            num   = _to_int(md.group(1))
-            label = f"Điều {md.group(1)}"
-            if num != prev_dieu + 1:
-                if prev_dieu > 0:
-                    warnings.append(
-                        f"LƯU Ý: {label} (PARA_ID={idx}): nhảy từ Điều {prev_dieu} sang {num}"
-                    )
-                elif has_chuong:
-                    pass
-            struct_lines.append(f"    {label:<12} → PARA_ID={idx}")
-            prev_dieu = num
-
-        elif mk:
-            label = f"Khoản {mk.group(1)}"
-            struct_lines.append(f"    {label:<12} → PARA_ID={idx}")
-
-        elif mdi:
-            label = f"Điểm {mdi.group(1)}"
-            struct_lines.append(f"      {label:<10} → PARA_ID={idx}")
-
-        elif mt:
-            label = f"Tiết {mt.group(1)}"
-            struct_lines.append(f"      {label:<10} → PARA_ID={idx}")
-
-        elif ms:
-            # Số đầu dòng kiểu công văn: "1.", "8.2." — chỉ ghi nếu là số đơn
-            num_str = ms.group(1)
-            if "." not in num_str:   # chỉ lấy mục cấp 1 (1, 2, 3...) tránh spam
-                label = f"Mục {num_str}."
-                struct_lines.append(f"  {label:<14} → PARA_ID={idx}")
-
-    # ── 3. Thông số trang ─────────────────────────────────────────────
+    # ── 2. Thông số trang ─────────────────────────────────────────────
     ps  = json_data.get("page_size", {})
     mg  = json_data.get("margins",   {})
     pn  = json_data.get("page_number", {})
@@ -441,16 +312,7 @@ def build_meta_chunk(txt_content: str, json_data: dict, filename: str,
             ref = f"→ {val}"
         lines.append(f"{label}: {trang_thai} {ref}".rstrip())
 
-    lines += ["", sep, "PHẦN 2 — THỨ TỰ CẤU TRÚC", sep]
-    if struct_lines:
-        lines.extend(struct_lines)
-    else:
-        lines.append("  (Không phát hiện Chương/Điều - văn bản không có cấu trúc phân cấp)")
-    if warnings:
-        lines.append("")
-        lines.extend(warnings)
-
-    lines += ["", sep, "PHẦN 3 — THÔNG SỐ TRANG", sep]
+    lines += ["", sep, "PHẦN 2 — THÔNG SỐ TRANG", sep]
     lines.extend(page_lines)
 
     content = "\n".join(lines)
