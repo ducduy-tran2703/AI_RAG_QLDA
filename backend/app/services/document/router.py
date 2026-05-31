@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
-from fastapi.responses import Response, RedirectResponse
+from fastapi.responses import Response, RedirectResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -239,9 +239,26 @@ async def download_document(
     db: AsyncSession = Depends(get_db)
 ):
     try:
+        # Verify document access
         doc = await DocumentService.get_document(db, document_id, current_user)
-        url = await get_file_url(doc.minio_object_key)
-        return RedirectResponse(url=url)
+
+        from ...shared.storage import UPLOAD_DIR
+        import os
+        # Đảm bảo đường dẫn sử dụng phân tách của hệ điều hành
+        normalized_key = doc.storage_key.replace('/', os.sep).replace('\\', os.sep)
+        file_path = os.path.abspath(os.path.join(UPLOAD_DIR, normalized_key))
+
+        logger.info(f"Checking file existence: {file_path}")
+
+        if not os.path.exists(file_path):
+             logger.error(f"File not found: {file_path}")
+             raise HTTPException(status_code=404, detail="Tệp tin không tồn tại trên máy chủ")
+
+        return FileResponse(
+            path=file_path,
+            filename=doc.original_filename,
+            media_type=doc.mime_type
+        )
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -260,7 +277,7 @@ async def preview_document(
 ):
     try:
         doc = await DocumentService.get_document(db, document_id, current_user)
-        url = await get_file_url(doc.minio_object_key)
+        url = await get_file_url(doc.storage_key)
         return {"preview_url": url, "file_type": doc.file_type}
     except HTTPException as he:
         raise he

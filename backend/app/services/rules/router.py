@@ -1,95 +1,87 @@
-import uuid
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from ...shared.database import get_db
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from ..auth.dependencies import get_current_active_user, require_roles
 from ...shared.models.user import User
 from .service import RuleService
 from .schemas import (
-    RuleSetDto, RuleSetCreate, RuleSetUpdate, RuleSetCloneRequest,
-    RuleDto, RuleCreate, RuleUpdate
+    RuleSetDto, RuleSetUpdate,
+    RuleDto, RuleCreate, RuleUpdate, RuleListResponse
 )
 
 router = APIRouter(prefix="/rules", tags=["Rules"])
 
-# ---------- Rule Sets ----------
+# ---------- Rule Sets (Documents) ----------
 
 @router.get("/sets", response_model=List[RuleSetDto])
 async def get_rule_sets(
-    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(100, ge=1),
+    search: Optional[str] = Query(None),
     current_user: User = Depends(get_current_active_user)
 ):
-    return await RuleService.get_rule_sets(db)
+    rule_sets, total = await RuleService.get_rule_sets(page, limit, search or "")
+    return rule_sets
 
-@router.post("/sets", response_model=RuleSetDto, status_code=status.HTTP_201_CREATED)
-async def create_rule_set(
-    data: RuleSetCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_roles("BIZ_ADMIN", "IT_ADMIN"))
-):
-    return await RuleService.create_rule_set(db, data, current_user)
-
-@router.get("/sets/{id}", response_model=RuleSetDto)
-async def get_rule_set(
-    id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    return await RuleService.get_rule_set(db, id)
-
-@router.put("/sets/{id}", response_model=RuleSetDto)
+@router.put("/sets/{id}", response_model=dict)
 async def update_rule_set(
-    id: int,
+    id: str,
     data: RuleSetUpdate,
-    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles("BIZ_ADMIN", "IT_ADMIN"))
 ):
-    return await RuleService.update_rule_set(db, id, data)
+    return await RuleService.update_rule_set(id, data.name)
 
-@router.post("/sets/{id}/clone", response_model=RuleSetDto)
-async def clone_rule_set(
-    id: int,
-    data: RuleSetCloneRequest,
-    db: AsyncSession = Depends(get_db),
+@router.delete("/sets/{id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_rule_set(
+    id: str,
     current_user: User = Depends(require_roles("BIZ_ADMIN", "IT_ADMIN"))
 ):
-    return await RuleService.clone_rule_set(db, id, data.new_name, data.new_code, current_user)
+    await RuleService.delete_rule_set(id)
+    return
 
-@router.post("/sets/{id}/set-default")
-async def set_default_rule_set(
-    id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_roles("BIZ_ADMIN", "IT_ADMIN"))
+# ---------- Rules (Chunks) ----------
+
+@router.get("/sets/{set_id}/rules", response_model=RuleListResponse)
+async def list_rules(
+    set_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1),
+    keywords: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_active_user)
 ):
-    await RuleService.set_default(db, id)
-    return {"success": True}
+    chunks, total = await RuleService.get_rules(set_id, page, limit, keywords or "")
+    return {"chunks": chunks, "total": total}
 
-# ---------- Rules ----------
+@router.get("/sets/{set_id}/rules/{rule_id}", response_model=dict)
+async def get_rule(
+    set_id: str,
+    rule_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    # This will return the normalized chunk from RAGFlow
+    return await RuleService.get_rule(set_id, rule_id)
 
-@router.post("/sets/{set_id}/rules", response_model=RuleDto, status_code=status.HTTP_201_CREATED)
+@router.post("/sets/{set_id}/rules", response_model=dict)
 async def create_rule(
-    set_id: int,
+    set_id: str,
     data: RuleCreate,
-    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles("BIZ_ADMIN", "IT_ADMIN"))
 ):
-    return await RuleService.create_rule(db, set_id, data)
+    return await RuleService.create_rule(set_id, data)
 
-@router.put("/{id}", response_model=RuleDto)
+@router.patch("/sets/{set_id}/rules/{rule_id}", response_model=dict)
 async def update_rule(
-    id: uuid.UUID,
+    set_id: str,
+    rule_id: str,
     data: RuleUpdate,
-    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles("BIZ_ADMIN", "IT_ADMIN"))
 ):
-    return await RuleService.update_rule(db, id, data)
+    return await RuleService.update_rule(set_id, rule_id, data)
 
-@router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_rule(
-    id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+@router.delete("/sets/{set_id}/rules", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_rules(
+    set_id: str,
+    rule_ids: List[str],
     current_user: User = Depends(require_roles("BIZ_ADMIN", "IT_ADMIN"))
 ):
-    await RuleService.delete_rule(db, id)
+    await RuleService.delete_rules(set_id, rule_ids)
     return

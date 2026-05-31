@@ -22,6 +22,11 @@ class ApprovalRequest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Relationships
+    document = relationship("Document")
+    submitter = relationship("User", foreign_keys=[submitted_by])
+    approver = relationship("User", foreign_keys=[approver_id])
+
 class DocumentComment(Base):
     __tablename__ = "document_comments"
 

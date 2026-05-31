@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     ragflow_base_url: str
     ragflow_api_key: str
+    RAGFLOW_KNOWLEDGE_DATASET_ID: str    # ID của dataset tri thức trên RAGFlow
     RAGFLOW_ASSISTANT_MANIFEST_ID: str
     RAGFLOW_ASSISTANT_FOMAT_ID: str
     

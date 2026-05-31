@@ -1,74 +1,136 @@
 import { useState } from 'react';
-import { useAdminSettings, useUpdateSetting } from '@/hooks/useAdminSettings';
-import { useAuthStore } from '@/stores/authStore';
+import { authApi } from '../../lib/api';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, List, TabsTrigger } from '@/components/ui/tabs'; // Giả định Tabs component từ shadcn
-import { Save, Shield, Mail, Database, Brain, Globe } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Lock, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 
 export default function SettingsPage() {
-  const user = useAuthStore((s) => s.user);
-  const { data: settings, isLoading } = useAdminSettings();
-  const updateMutation = useUpdateSetting();
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
-  const isAdmin = user?.role === 'IT_ADMIN';
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
 
-  const handleUpdate = async (key: string, value: string) => {
+    if (newPassword !== confirmPassword) {
+      setError('Mật khẩu mới và xác nhận mật khẩu không khớp.');
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      setError('Mật khẩu mới phải có ít nhất 8 ký tự.');
+      return;
+    }
+
+    setIsLoading(true);
     try {
-      await updateMutation.mutateAsync({ key, value });
-      alert('Cập nhật thành công!');
-    } catch (e) {
-      alert('Lỗi khi cập nhật cấu hình');
+      await authApi.changePassword(currentPassword, newPassword);
+      setSuccess('Đổi mật khẩu thành công.');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Không thể đổi mật khẩu. Vui lòng kiểm tra lại mật khẩu hiện tại.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  if (!isAdmin) return <div className="p-8">Bạn không có quyền truy cập trang này.</div>;
-  if (isLoading) return <div className="p-8 text-center">Đang tải cấu hình...</div>;
-
-  // Group settings by category
-  const categories = Array.from(new Set(settings?.map((s: any) => s.category)));
-
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-3xl font-bold tracking-tight">Cài đặt hệ thống</h2>
-        <p className="text-muted-foreground">Quản lý các tham số vận hành của toàn hệ thống</p>
-      </div>
-
-      <div className="grid gap-6">
-        {settings?.map((setting: any) => (
-          <Card key={setting.key}>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">{setting.label}</CardTitle>
-              <CardDescription>{setting.description}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex gap-4 items-center">
-                <div className="flex-1">
-                  <Input
-                    defaultValue={setting.value}
-                    onBlur={(e) => {
-                      if (e.target.value !== setting.value) {
-                        handleUpdate(setting.key, e.target.value);
-                      }
-                    }}
-                  />
-                </div>
-                <Badge variant="outline" className="font-mono text-xs uppercase">{setting.value_type}</Badge>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-
-        {settings?.length === 0 && (
-          <div className="text-center py-12 border-2 border-dashed rounded-lg">
-            <Settings2 className="mx-auto h-12 w-12 text-muted-foreground opacity-20" />
-            <p className="mt-4 text-muted-foreground">Chưa có cấu hình nào trong database.</p>
+    <div className="container max-w-2xl mx-auto py-8 space-y-6">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center space-x-2">
+            <Lock className="h-5 w-5 text-primary" />
+            <CardTitle>Đổi mật khẩu</CardTitle>
           </div>
-        )}
-      </div>
+          <CardDescription>Thay đổi mật khẩu đăng nhập của bạn để bảo mật tài khoản</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleChangePassword} className="space-y-4">
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            {success && (
+              <Alert className="border-green-500 bg-green-50 text-green-700">
+                <CheckCircle className="h-4 w-4 text-green-600" />
+                <AlertDescription>{success}</AlertDescription>
+              </Alert>
+            )}
+
+            <div className="space-y-2">
+              <Label htmlFor="current_password">Mật khẩu hiện tại</Label>
+              <Input
+                id="current_password"
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                required
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="new_password">Mật khẩu mới</Label>
+              <Input
+                id="new_password"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required
+                disabled={isLoading}
+                placeholder="Tối thiểu 8 ký tự"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="confirm_password">Xác nhận mật khẩu mới</Label>
+              <Input
+                id="confirm_password"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <Button type="submit" disabled={isLoading}>
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Đang xử lý...
+                  </>
+                ) : 'Cập nhật mật khẩu'}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Cài đặt khác</CardTitle>
+          <CardDescription>Các cấu hình bổ sung cho tài khoản</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground italic">
+            Các cài đặt thông báo và giao diện sẽ được cập nhật trong phiên bản tới.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

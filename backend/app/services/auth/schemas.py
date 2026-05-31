@@ -8,10 +8,6 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=1)
 
-class SSOLoginRequest(BaseModel):
-    ldap_username: str
-    password: str
-
 class TokenRefreshRequest(BaseModel):
     refresh_token: str
 

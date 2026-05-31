@@ -66,7 +66,7 @@ class CheckService:
                 })
                 return
 
-            file_path = os.path.join(settings.UPLOAD_DIR, doc.minio_object_key)
+            file_path = os.path.join(settings.UPLOAD_DIR, doc.storage_key)
             file_type = doc.file_type
 
         # Kiểm tra file tồn tại

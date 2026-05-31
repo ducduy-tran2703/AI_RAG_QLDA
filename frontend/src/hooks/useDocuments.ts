@@ -14,7 +14,7 @@ export function useDocuments(
     queryKey: ['documents', page, limit, folderId, search, fileType, sort, order],
     queryFn: async () => {
       const params: Record<string, any> = { page, limit, sort, order };
-      if (folderId) params.folder_id = folderId;
+      if (folderId && folderId !== 'all') params.folder_id = folderId;
       if (search) params.search = search;
       if (fileType) params.file_type = fileType;
       const res = await documentApi.list(params);

@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...shared.database import get_db
 from .service import AuthService
 from .schemas import (
-    LoginRequest, SSOLoginRequest, TokenRefreshRequest,
+    LoginRequest, TokenRefreshRequest,
     LogoutRequest, ForgotPasswordRequest, ResetPasswordRequest,
     ChangePasswordRequest, RegisterRequest, UserUpdateRequest,
     TokenResponse, RefreshTokenResponse, MessageResponse, UserDto, SessionDto
@@ -21,11 +21,6 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email hoặc mật khẩu không đúng")
     return AuthService.create_tokens(user)
-
-@router.post("/login/sso", response_model=TokenResponse)
-async def sso_login(data: SSOLoginRequest, db: AsyncSession = Depends(get_db)):
-    # TODO: Tích hợp LDAP thật sau
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="SSO chưa được triển khai")
 
 @router.post("/register", response_model=UserDto, status_code=status.HTTP_201_CREATED)
 async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):

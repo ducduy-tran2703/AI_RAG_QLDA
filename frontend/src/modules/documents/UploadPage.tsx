@@ -1,16 +1,23 @@
-import { useState, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useState, useCallback, useEffect } from 'react';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useUploadDocument } from '../../hooks/useDocuments';
+import { useFolders } from '../../hooks/useFolders';
 import { useCheckProgress } from '../../hooks/useWebSocket';
 import { FileUploadZone } from '@/components/ui/FileUploadZone';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
 import { CheckCircle2, Loader2, ArrowRight } from 'lucide-react';
 
 export default function UploadPage() {
+  const [searchParams] = useSearchParams();
+  const folderIdParam = searchParams.get('folderId');
+
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [folderId, setFolderId] = useState<string | null>(folderIdParam || null);
   const [checkId, setCheckId] = useState<string | null>(null);
   const [progress, setProgress] = useState({ stage: '', percent: 0 });
   const [complete, setComplete] = useState(false);
@@ -18,6 +25,12 @@ export default function UploadPage() {
 
   const navigate = useNavigate();
   const uploadMutation = useUploadDocument();
+  const { data: folders } = useFolders();
+
+  // Đồng bộ folderId từ URL nếu nó thay đổi
+  useEffect(() => {
+    if (folderIdParam) setFolderId(folderIdParam);
+  }, [folderIdParam]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) setFile(acceptedFiles[0]);
@@ -42,6 +55,9 @@ export default function UploadPage() {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      if (folderId && folderId !== 'all') {
+        formData.append('folder_id', folderId);
+      }
       const res = await uploadMutation.mutateAsync(formData);
       setCheckId(res.check_id);
     } catch (err) {
@@ -61,6 +77,24 @@ export default function UploadPage() {
         <CardContent className="pt-6">
           {!checkId ? (
             <div className="space-y-6">
+              <div className="space-y-2">
+                <Label htmlFor="folder">Lưu vào thư mục</Label>
+                <Select
+                  value={folderId || 'all'}
+                  onValueChange={(value) => setFolderId(value === 'all' ? null : value)}
+                >
+                  <SelectTrigger id="folder">
+                    <SelectValue placeholder="Chọn thư mục (Tùy chọn)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Mặc định (Không có thư mục)</SelectItem>
+                    {folders?.map((f) => (
+                      <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <FileUploadZone
                 onDrop={onDrop}
                 files={file ? [file] : []}

@@ -333,7 +333,7 @@ async def run_check_pipeline(
             rag_context = {"source": "mock", "model": "heuristic"}
         else:
             print(f"[PIPELINE] Gửi {len(content_chunks)} chunks đến RAGFlow")
-            rag_results = await ragflow_client.send_chunks(content_chunks, doc_type)
+            rag_results = await ragflow_client.send_chunks(content_chunks)
             print(f"[PIPELINE] RAGFlow trả về {len(rag_results)} kết quả")
 
             # Parse results

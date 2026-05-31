@@ -60,9 +60,13 @@ export default function CheckResultPage() {
         const axiosRes = await checkApi.exportJson(id!);
         const blob = new Blob([JSON.stringify(axiosRes.data, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
-        window.open(url, '_blank');
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `check_result_${id}.json`;
+        a.click();
       } else {
-        const response = await fetch(`/api/v1/checks/${id}/export/pdf`, {
+        const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+        const response = await fetch(`${baseUrl}/checks/${id}/export/pdf`, {
           headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
         });
         const blob = await response.blob();

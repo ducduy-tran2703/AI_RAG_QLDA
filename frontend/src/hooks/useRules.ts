@@ -1,74 +1,78 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { rulesApi } from '../lib/api';
 
-export const useRuleSets = () => {
+export const useRuleSets = (params?: any) => {
   return useQuery({
-    queryKey: ['rule-sets'],
+    queryKey: ['rule-sets', params],
     queryFn: async () => {
-      const res = await rulesApi.getSets();
+      const res = await rulesApi.getSets(params);
       return res.data;
     },
-  });
-};
-
-export const useRuleSet = (id: number) => {
-  return useQuery({
-    queryKey: ['rule-set', id],
-    queryFn: async () => {
-      const res = await rulesApi.getSet(id);
-      return res.data;
-    },
-    enabled: !!id,
-  });
-};
-
-export const useCreateRuleSet = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (data: any) => rulesApi.createSet(data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rule-sets'] }),
   });
 };
 
 export const useUpdateRuleSet = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: number; data: any }) => rulesApi.updateSet(id, data),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['rule-sets'] });
-      queryClient.invalidateQueries({ queryKey: ['rule-set', variables.id] });
-    },
+    mutationFn: ({ id, data }: { id: string; data: { name: string } }) =>
+      rulesApi.updateSet(id, data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rule-sets'] }),
   });
 };
 
-export const useCloneRuleSet = () => {
+export const useDeleteRuleSet = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: number; data: any }) => rulesApi.cloneSet(id, data),
+    mutationFn: (id: string) => rulesApi.deleteSet(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rule-sets'] }),
+  });
+};
+
+export const useRules = (setId: string, params?: any) => {
+  return useQuery({
+    queryKey: ['rules', setId, params],
+    queryFn: async () => {
+      const res = await rulesApi.listRules(setId, params);
+      return res.data;
+    },
+    enabled: !!setId,
+  });
+};
+
+export const useRuleDetail = (setId: string, ruleId: string | null) => {
+  return useQuery({
+    queryKey: ['rule-detail', setId, ruleId],
+    queryFn: async () => {
+      const res = await rulesApi.getRule(setId, ruleId!);
+      return res.data;
+    },
+    enabled: !!setId && !!ruleId,
   });
 };
 
 export const useCreateRule = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ setId, data }: { setId: number; data: any }) => rulesApi.createRule(setId, data),
-    onSuccess: (_, variables) => queryClient.invalidateQueries({ queryKey: ['rule-set', variables.setId] }),
+    mutationFn: ({ setId, data }: { setId: string; data: any }) =>
+      rulesApi.createRule(setId, data),
+    onSuccess: (_, { setId }) => queryClient.invalidateQueries({ queryKey: ['rules', setId] }),
   });
 };
 
 export const useUpdateRule = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, setId, data }: { id: string; setId: number; data: any }) => rulesApi.updateRule(id, data),
-    onSuccess: (_, variables) => queryClient.invalidateQueries({ queryKey: ['rule-set', variables.setId] }),
+    mutationFn: ({ setId, ruleId, data }: { setId: string; ruleId: string; data: any }) =>
+      rulesApi.updateRule(setId, ruleId, data),
+    onSuccess: (_, { setId }) => queryClient.invalidateQueries({ queryKey: ['rules', setId] }),
   });
 };
 
-export const useDeleteRule = () => {
+export const useDeleteRules = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, setId }: { id: string; setId: number }) => rulesApi.deleteRule(id),
-    onSuccess: (_, variables) => queryClient.invalidateQueries({ queryKey: ['rule-set', variables.setId] }),
+    mutationFn: ({ setId, ruleIds }: { setId: string; ruleIds: string[] }) =>
+      rulesApi.deleteRules(setId, ruleIds),
+    onSuccess: (_, { setId }) => queryClient.invalidateQueries({ queryKey: ['rules', setId] }),
   });
 };

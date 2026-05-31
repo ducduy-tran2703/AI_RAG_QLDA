@@ -44,7 +44,7 @@ export default function PendingApprovalsPage() {
                     <FileText className="w-6 h-6 text-primary" />
                   </div>
                   <div>
-                    <CardTitle className="text-lg">Văn bản: {req.document_id}</CardTitle>
+                    <CardTitle className="text-lg">Văn bản: {req.document_name || req.document_id}</CardTitle>
                     <CardDescription className="flex items-center gap-2 mt-1">
                       <Clock className="w-3 h-3" />
                       Gửi lúc: {new Date(req.submitted_at).toLocaleString('vi-VN')}
@@ -58,7 +58,7 @@ export default function PendingApprovalsPage() {
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <User className="w-4 h-4" />
-                  Người gửi ID: <span className="font-medium text-foreground">{req.submitted_by}</span>
+                  Người gửi: <span className="font-medium text-foreground">{req.submitter_name || req.submitted_by}</span>
                 </div>
                 {req.submitter_note && (
                   <p className="text-sm italic text-muted-foreground bg-muted/50 p-2 rounded">

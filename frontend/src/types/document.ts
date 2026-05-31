@@ -7,6 +7,8 @@ export interface DocumentDto {
   doc_type?: string;
   tags: string[];
   folder_id?: string;
+  latest_check_id?: string;
+  latest_score?: number;
   created_at: string;
   updated_at: string;
 }
