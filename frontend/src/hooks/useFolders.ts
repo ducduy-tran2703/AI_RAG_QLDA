@@ -43,3 +43,14 @@ export function useDeleteFolder() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['folders'] }),
   });
 }
+
+export function useUpdateFolder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: { name?: string; color?: string; icon?: string } }) => {
+      const res = await api.put(`/documents/folders/${id}`, data);
+      return res.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['folders'] }),
+  });
+}

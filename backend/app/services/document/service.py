@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update, delete
 from sqlalchemy.orm import selectinload
 from ...shared.models.document import Document, DocumentFolder, DocumentVersion
+from ...shared.models.check import CheckResult
 from ...shared.models.user import User
 from ...shared.storage import upload_file, get_file_url, delete_file
 from .schemas import DocumentUpdateRequest, FolderCreateRequest, FolderUpdateRequest
@@ -68,7 +69,7 @@ class DocumentService:
             display_name=file.filename,
             file_type=file_type,
             file_size_bytes=file_size,
-            minio_object_key=object_key,
+            storage_key=object_key,
             checksum_sha256=sha256_hash,
             mime_type=mime_type,
         )
@@ -80,11 +81,22 @@ class DocumentService:
     @staticmethod
     async def get_document(db: AsyncSession, document_id: uuid.UUID, user: User) -> Document:
         result = await db.execute(
-            select(Document).where(Document.id == document_id, Document.user_id == user.id, Document.is_deleted == False)
+            select(Document)
+            .options(selectinload(Document.check_results))
+            .where(Document.id == document_id, Document.user_id == user.id, Document.is_deleted == False)
         )
         doc = result.scalar_one_or_none()
         if not doc:
             raise HTTPException(status_code=404, detail="Không tìm thấy văn bản")
+
+        if doc.check_results:
+            latest = sorted(doc.check_results, key=lambda x: x.checked_at, reverse=True)[0]
+            doc.latest_check_id = latest.id
+            doc.latest_score = latest.score
+        else:
+            doc.latest_check_id = None
+            doc.latest_score = None
+
         return doc
 
     @staticmethod
@@ -173,8 +185,18 @@ class DocumentService:
         order: str = "desc"
     ):
         query = select(Document).where(Document.user_id == user.id, Document.is_deleted == False)
+
+        # Sửa logic folder_id:
+        # Nếu folder_id là một UUID hợp lệ, filter theo nó.
+        # Nếu FE gửi một giá trị đặc biệt (ví dụ UUID '00000000-0000-0000-0000-000000000000'), ta filter document.folder_id is NULL.
+        # Nếu folder_id là None (không gửi), ta lấy tất cả (không filter).
+
         if folder_id is not None:
-            query = query.where(Document.folder_id == folder_id)
+            if str(folder_id) == '00000000-0000-0000-0000-000000000000':
+                query = query.where(Document.folder_id == None)
+            else:
+                query = query.where(Document.folder_id == folder_id)
+
         if search:
             query = query.where(Document.display_name.ilike(f"%{search}%"))
         if file_type:
@@ -194,9 +216,25 @@ class DocumentService:
         # Phân trang
         offset = (page - 1) * limit
         query = query.offset(offset).limit(limit)
+
+        # Load check_results để lấy latest_check_id
+        query = query.options(selectinload(Document.check_results))
+
         result = await db.execute(query)
         documents = result.scalars().all()
-        
+
+        # Gán latest_check_id và latest_score cho mỗi doc
+        for doc in documents:
+            if doc.check_results:
+                # Sắp xếp theo checked_at giảm dần
+                sorted_checks = sorted(doc.check_results, key=lambda x: x.checked_at, reverse=True)
+                latest = sorted_checks[0]
+                doc.latest_check_id = latest.id
+                doc.latest_score = latest.score
+            else:
+                doc.latest_check_id = None
+                doc.latest_score = None
+
         return documents, total
 
     @staticmethod
@@ -224,7 +262,7 @@ class DocumentService:
             document_id=doc.id,
             version_number=new_version,
             version_label=f"v{new_version}",
-            minio_object_key=object_key,
+            storage_key=object_key,
             file_size_bytes=len(content),
             checksum_sha256=sha256_hash,
             change_notes=change_notes,

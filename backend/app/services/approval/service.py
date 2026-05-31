@@ -35,12 +35,21 @@ class ApprovalService:
 
     @staticmethod
     async def get_pending_requests(db: AsyncSession, user: User):
+        from sqlalchemy.orm import joinedload
         result = await db.execute(
             select(ApprovalRequest)
+            .options(joinedload(ApprovalRequest.document), joinedload(ApprovalRequest.submitter))
             .where(ApprovalRequest.approver_id == user.id, ApprovalRequest.status == "pending")
             .order_by(ApprovalRequest.submitted_at.desc())
         )
-        return result.scalars().all()
+        requests = result.scalars().all()
+
+        # Populate names for DTO
+        for r in requests:
+            r.document_name = r.document.display_name if r.document else "Unknown"
+            r.submitter_name = r.submitter.full_name if r.submitter else "Unknown"
+
+        return requests
 
     @staticmethod
     async def process_request(db: AsyncSession, request_id: uuid.UUID, user: User, action: str, note: str | None):

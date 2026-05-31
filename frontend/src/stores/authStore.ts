@@ -28,8 +28,9 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isLoading: true });
     try {
       const res = await api.post('/auth/login', { email, password });
-      const { access_token, user } = res.data;
+      const { access_token, refresh_token, user } = res.data;
       localStorage.setItem('access_token', access_token);
+      localStorage.setItem('refresh_token', refresh_token);
       set({ token: access_token, user, isLoading: false });
     } catch (err) {
       set({ isLoading: false });
@@ -38,6 +39,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
   logout: () => {
     localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
     set({ token: null, user: null });
   },
   setToken: (token) => {

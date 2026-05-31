@@ -4,7 +4,7 @@ import { useDocuments } from '../../hooks/useDocuments';
 import FolderSelector from '../../components/folders/FolderSelector';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Search, FileText, Trash2, Download, ArrowUpDown } from 'lucide-react';
+import { Plus, Search, FileText, Trash2, Download, ArrowUpDown, ExternalLink, CheckCircle } from 'lucide-react';
 import { DocumentDto } from '@/types/index';
 import { documentApi } from '@/lib/api';
 
@@ -36,8 +36,12 @@ export default function DocumentListPage() {
 
   const handleDelete = async (id: string) => {
     if (confirm('Xóa văn bản này?')) {
-      await documentApi.delete(id);
-      refetch();
+      try {
+        await documentApi.delete(id);
+        refetch();
+      } catch (err: any) {
+        alert(err.response?.data?.detail || 'Lỗi khi xóa văn bản');
+      }
     }
   };
 
@@ -57,7 +61,7 @@ export default function DocumentListPage() {
         <h1 className="text-2xl font-bold tracking-tight">
           Văn bản <span className="text-muted-foreground text-lg font-normal">({meta.total})</span>
         </h1>
-        <Button onClick={() => navigate('/upload')}>
+        <Button onClick={() => navigate(`/upload${folderId ? `?folderId=${folderId}` : ''}`)}>
           <Plus className="h-4 w-4 mr-1" /> Kiểm tra mới
         </Button>
       </div>
@@ -87,6 +91,7 @@ export default function DocumentListPage() {
                     Tên file <ArrowUpDown className="h-3 w-3" />
                   </button>
                 </th>
+                <th className="text-left p-3 text-sm font-medium text-muted-foreground">Điểm</th>
                 <th className="text-left p-3 text-sm font-medium text-muted-foreground">Loại</th>
                 <th className="text-left p-3 text-sm font-medium text-muted-foreground">Dung lượng</th>
                 <th className="text-left p-3 text-sm font-medium text-muted-foreground">
@@ -100,7 +105,7 @@ export default function DocumentListPage() {
             <tbody>
               {documents.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-12 text-center text-muted-foreground">
+                  <td colSpan={6} className="p-12 text-center text-muted-foreground">
                     <FileText className="h-12 w-12 mx-auto mb-2 opacity-20" />
                     <p>Chưa có văn bản nào</p>
                     <Button variant="outline" className="mt-2" onClick={() => navigate('/upload')}>
@@ -112,10 +117,26 @@ export default function DocumentListPage() {
                 documents.map((doc) => (
                   <tr key={doc.id} className="border-b hover:bg-muted/30 transition-colors">
                     <td className="p-3">
-                      <Link to={`/checks/${doc.id}`} className="flex items-center gap-2 hover:text-primary">
+                      <Link to={`/documents/${doc.id}`} className="flex items-center gap-2 hover:text-primary group">
                         <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
                         <span className="text-sm font-medium truncate max-w-xs">{doc.display_name}</span>
+                        <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                       </Link>
+                    </td>
+                    <td className="p-3">
+                      {doc.latest_check_id ? (
+                        <Link to={`/checks/${doc.latest_check_id}`}>
+                          <div className={`text-sm font-bold ${
+                            (doc.latest_score || 0) >= 90 ? 'text-green-600' :
+                            (doc.latest_score || 0) >= 75 ? 'text-lime-600' :
+                            (doc.latest_score || 0) >= 60 ? 'text-amber-600' : 'text-red-600'
+                          }`}>
+                            {doc.latest_score ?? '--'}
+                          </div>
+                        </Link>
+                      ) : (
+                        <span className="text-xs text-muted-foreground italic">Chưa kiểm tra</span>
+                      )}
                     </td>
                     <td className="p-3 text-sm uppercase text-muted-foreground">{doc.file_type}</td>
                     <td className="p-3 text-sm text-muted-foreground">
@@ -123,18 +144,43 @@ export default function DocumentListPage() {
                     </td>
                     <td className="p-3 text-sm text-muted-foreground">
                       {new Date(doc.created_at).toLocaleDateString('vi-VN', {
-                        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                        day: '2-digit', month: '2-digit', year: 'numeric'
                       })}
                     </td>
                     <td className="p-3 text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="icon" asChild>
-                          <Link to={`/checks/${doc.id}`}><FileText className="h-4 w-4" /></Link>
+                        <Button variant="ghost" size="icon" asChild title="Xem chi tiết">
+                          <Link to={`/documents/${doc.id}`}><FileText className="h-4 w-4" /></Link>
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => documentApi.download(doc.id)}>
+                        {doc.latest_check_id && (
+                          <Button variant="ghost" size="icon" asChild title="Xem kết quả kiểm tra">
+                            <Link to={`/checks/${doc.latest_check_id}`}><CheckCircle className="h-4 w-4 text-green-600" /></Link>
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={async () => {
+                            try {
+                              const res = await documentApi.download(doc.id);
+                              const url = window.URL.createObjectURL(new Blob([res.data]));
+                              const link = document.createElement('a');
+                              link.href = url;
+                              link.setAttribute('download', doc.original_filename);
+                              document.body.appendChild(link);
+                              link.click();
+                              link.remove();
+                              window.URL.revokeObjectURL(url);
+                            } catch (e) {
+                              console.error('Download failed', e);
+                              alert('Lỗi khi tải xuống văn bản');
+                            }
+                          }}
+                          title="Tải xuống"
+                        >
                           <Download className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => handleDelete(doc.id)}>
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(doc.id)} title="Xóa">
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>

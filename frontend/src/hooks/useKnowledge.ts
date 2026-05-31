@@ -1,16 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { knowledgeApi } from '../lib/api';
 
-export const useKnowledgeCategories = () => {
-  return useQuery({
-    queryKey: ['knowledge-categories'],
-    queryFn: async () => {
-      const res = await knowledgeApi.getCategories();
-      return res.data;
-    },
-  });
-};
-
 export const useKnowledgeDocuments = (params: any) => {
   return useQuery({
     queryKey: ['knowledge-documents', params],
@@ -24,10 +14,31 @@ export const useKnowledgeDocuments = (params: any) => {
 export const useUploadKnowledgeDocument = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: any) => knowledgeApi.uploadDocument(data),
+    mutationFn: (file: File) => knowledgeApi.uploadDocument(file),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['knowledge-documents'] });
       queryClient.invalidateQueries({ queryKey: ['knowledge-stats'] });
+    },
+  });
+};
+
+export const useDeleteKnowledgeDocument = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => knowledgeApi.deleteDocument(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['knowledge-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['knowledge-stats'] });
+    },
+  });
+};
+
+export const useUpdateKnowledgeDocument = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: any }) => knowledgeApi.updateDocument(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['knowledge-documents'] });
     },
   });
 };

@@ -17,8 +17,10 @@ class ApprovalAction(BaseModel):
 class ApprovalDto(BaseModel):
     id: UUID
     document_id: UUID
+    document_name: Optional[str] = None
     check_result_id: Optional[UUID] = None
     submitted_by: UUID
+    submitter_name: Optional[str] = None
     approver_id: UUID
     status: str
     submitter_note: Optional[str] = None

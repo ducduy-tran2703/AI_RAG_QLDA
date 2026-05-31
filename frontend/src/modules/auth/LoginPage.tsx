@@ -1,24 +1,28 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
+import { authApi } from '../../lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { FileText, Lock, Mail, AlertCircle } from 'lucide-react';
+import { FileText, Lock, Mail, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isForgotLoading, setIsForgotLoading] = useState(false);
   const login = useAuthStore((s) => s.login);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccessMessage('');
     setIsLoading(true);
     try {
       await login(email, password);
@@ -27,6 +31,24 @@ export default function LoginPage() {
       setError(err.response?.data?.detail || 'Đăng nhập thất bại. Vui lòng kiểm tra lại email và mật khẩu.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError('Vui lòng nhập email trước khi yêu cầu đặt lại mật khẩu.');
+      return;
+    }
+    setError('');
+    setSuccessMessage('');
+    setIsForgotLoading(true);
+    try {
+      const res = await authApi.forgotPassword(email);
+      setSuccessMessage(res.data.message || 'Hướng dẫn đặt lại mật khẩu đã được gửi đến email của bạn.');
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Không thể gửi yêu cầu. Vui lòng thử lại sau.');
+    } finally {
+      setIsForgotLoading(false);
     }
   };
 
@@ -57,6 +79,13 @@ export default function LoginPage() {
                 </Alert>
               )}
 
+              {successMessage && (
+                <Alert className="py-3 border-green-500 bg-green-50 text-green-700">
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <AlertDescription className="text-xs">{successMessage}</AlertDescription>
+                </Alert>
+              )}
+
               <div className="space-y-2">
                 <Label htmlFor="email">Email công vụ</Label>
                 <div className="relative">
@@ -69,7 +98,7 @@ export default function LoginPage() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
-                    disabled={isLoading}
+                    disabled={isLoading || isForgotLoading}
                   />
                 </div>
               </div>
@@ -77,8 +106,14 @@ export default function LoginPage() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="password">Mật khẩu</Label>
-                  <Button variant="link" className="px-0 font-normal text-xs h-auto" type="button">
-                    Quên mật khẩu?
+                  <Button
+                    variant="link"
+                    className="px-0 font-normal text-xs h-auto"
+                    type="button"
+                    disabled={isForgotLoading || isLoading}
+                    onClick={handleForgotPassword}
+                  >
+                    {isForgotLoading ? 'Đang gửi...' : 'Quên mật khẩu?'}
                   </Button>
                 </div>
                 <div className="relative">
@@ -91,33 +126,20 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    disabled={isLoading}
+                    disabled={isLoading || isForgotLoading}
                   />
                 </div>
               </div>
 
-              <Button type="submit" className="w-full h-11 text-base font-semibold" disabled={isLoading}>
+              <Button className="w-full" type="submit" disabled={isLoading || isForgotLoading}>
                 {isLoading ? (
                   <>
-                    <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     Đang đăng nhập...
                   </>
                 ) : 'Đăng nhập'}
               </Button>
             </form>
-
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-background px-2 text-muted-foreground">Hoặc</span>
-              </div>
-            </div>
-
-            <Button variant="outline" className="w-full" type="button" disabled={isLoading}>
-              Đăng nhập qua SSO (LDAP/AD)
-            </Button>
           </CardContent>
           <CardFooter className="flex flex-col space-y-4 pt-0">
             <p className="text-xs text-center text-muted-foreground">

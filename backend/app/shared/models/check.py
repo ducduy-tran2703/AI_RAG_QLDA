@@ -26,7 +26,8 @@ class CheckResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     # Quan hệ
-    errors = relationship("CheckError", back_populates="result", order_by="CheckError.severity")
+    errors = relationship("CheckError", back_populates="result", cascade="all, delete-orphan", order_by="CheckError.severity")
+    document = relationship("Document", back_populates="check_results")
 
 class CheckError(Base):
     __tablename__ = "check_errors"

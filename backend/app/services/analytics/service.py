@@ -26,12 +26,22 @@ class AnalyticsService:
         today_checks_res = await db.execute(today_checks_query)
         today_checks = today_checks_res.scalar() or 0
 
-        # 3. Average Score
-        avg_score_query = select(func.avg(CheckResult.score)).join(Document).where(
+        # 3. Average Score & Pass Rate
+        avg_score_query = select(
+            func.avg(CheckResult.score),
+            func.count(CheckResult.id).filter(CheckResult.score >= 75)
+        ).join(Document).where(
             Document.user_id == user.id
         )
         avg_score_res = await db.execute(avg_score_query)
-        avg_score = avg_score_res.scalar() or 0.0
+        avg_score, pass_count = avg_score_res.fetchone()
+
+        # Calculate pass rate
+        total_checks_query = select(func.count(CheckResult.id)).join(Document).where(
+            Document.user_id == user.id
+        )
+        total_checks = (await db.execute(total_checks_query)).scalar() or 0
+        pass_rate = (pass_count / total_checks * 100) if total_checks > 0 else 0.0
 
         # 4. Trend data (last 7 days)
         trend_data = []
@@ -55,8 +65,8 @@ class AnalyticsService:
         return {
             "total_documents": total_docs,
             "documents_today": today_checks,
-            "pass_rate": 85.0 if total_docs > 0 else 0.0, # Mock pass rate for now
-            "average_score": round(float(avg_score), 1),
+            "pass_rate": round(pass_rate, 1),
+            "average_score": round(float(avg_score or 0.0), 1),
             "trend_data": trend_data,
-            "recent_checks": [] # Can be populated later
+            "recent_checks": []
         }

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from ...shared.database import get_db
 from ...shared.models.check import CheckResult, CheckError
 from ...shared.models.document import Document
@@ -31,8 +32,8 @@ async def create_check(
     if doc.is_deleted:
         raise HTTPException(status_code=400, detail="Văn bản đã bị xóa")
     
-    check_id = await CheckService.create_check(db, data, current_user)
-    return CheckCreateResponse(check_id=str(check_id))
+    check_result = await CheckService.create_check(db, data, current_user)
+    return CheckCreateResponse(check_id=str(check_result.id), status=check_result.status)
 
 
 @router.get("/{check_id}", response_model=CheckResultDto)
@@ -144,12 +145,12 @@ async def recheck_document(
 ):
     """Kiểm tra lại văn bản"""
     result = await CheckService.get_check(db, check_id, current_user)
-    new_check_id = await CheckService.create_check(
+    new_check = await CheckService.create_check(
         db,
         type("data", (), {"document_id": result.document_id, "version_id": None, "rule_set_id": None})(),
         current_user
     )
-    return CheckCreateResponse(check_id=str(new_check_id))
+    return CheckCreateResponse(check_id=str(new_check.id), status=new_check.status)
 
 
 # ===================== NORMALIZE =====================

@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import LoginPage from '../modules/auth/LoginPage';
 import DocumentListPage from '../modules/documents/DocumentListPage';
+import DocumentDetailPage from '../modules/documents/DocumentDetailPage';
 import UploadPage from '../modules/documents/UploadPage';
 import CheckResultPage from '../modules/checks/CheckResultPage';
 import DashboardPage from '../modules/analytics/DashboardPage';
@@ -37,6 +38,10 @@ const router = createBrowserRouter([
       {
         path: 'documents',
         element: <DocumentListPage />,
+      },
+      {
+        path: 'documents/:id',
+        element: <DocumentDetailPage />,
       },
       {
         path: 'upload',

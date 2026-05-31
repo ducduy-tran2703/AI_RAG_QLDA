@@ -13,12 +13,14 @@ class DocumentDto(BaseModel):
     display_name: str
     file_type: str
     file_size_bytes: int
-    minio_object_key: str
+    storage_key: str
     checksum_sha256: str
     mime_type: str
     is_deleted: bool = False
     doc_type: Optional[str] = None
     tags: list[str] = []
+    latest_check_id: Optional[uuid.UUID] = None
+    latest_score: Optional[float] = None
     created_at: datetime
     updated_at: datetime
 
@@ -31,7 +33,7 @@ class DocumentVersionDto(BaseModel):
     document_id: uuid.UUID
     version_number: int
     version_label: Optional[str] = None
-    minio_object_key: str
+    storage_key: str
     file_size_bytes: int
     checksum_sha256: str
     change_notes: Optional[str] = None

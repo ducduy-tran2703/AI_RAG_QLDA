@@ -16,7 +16,7 @@ class Document(Base):
     display_name: Mapped[str] = mapped_column(String(500), nullable=False)
     file_type: Mapped[str] = mapped_column(String(10), nullable=False)  # 'docx' hoặc 'pdf'
     file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    minio_object_key: Mapped[str] = mapped_column(String(1000), nullable=False)
+    storage_key: Mapped[str] = mapped_column("minio_object_key", String(1000), nullable=False)
     checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -29,7 +29,9 @@ class Document(Base):
     # Relationships
     owner = relationship("User", back_populates="documents")
     folder = relationship("DocumentFolder", back_populates="documents")
-    versions = relationship("DocumentVersion", back_populates="document", order_by="DocumentVersion.version_number")
+    versions = relationship("DocumentVersion", back_populates="document", cascade="all, delete-orphan", order_by="DocumentVersion.version_number")
+    # Thêm relationship check_results với cascade delete
+    check_results = relationship("CheckResult", back_populates="document", cascade="all, delete-orphan")
 
 class DocumentFolder(Base):
     __tablename__ = "document_folders"
@@ -53,7 +55,7 @@ class DocumentVersion(Base):
     document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     version_label: Mapped[str] = mapped_column(String(50), nullable=True)
-    minio_object_key: Mapped[str] = mapped_column(String(1000), nullable=False)
+    storage_key: Mapped[str] = mapped_column("minio_object_key", String(1000), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     change_notes: Mapped[str] = mapped_column(Text, nullable=True)

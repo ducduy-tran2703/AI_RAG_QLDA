@@ -1010,3 +1010,15 @@ if __name__ == '__main__':
             json.dump(all_reports, f, ensure_ascii=False, indent=2)
         print(f"\n📦 Tổng hợp toàn bộ: {all_path}")
         print(f"\n🚀 Token giảm ước tính: 70-85% so với bản cũ!")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# WRAPPER FUNCTION - Dùng cho pipeline backend
+# ═════════════════════════════════════════════════════════════════════
+
+def extract_pdf_to_dict(file_path: str) -> dict:
+    """
+    Extract .pdf file và trả về dict.
+    Dùng cho pipeline backend (import được).
+    """
+    return extract_pdf_optimized(file_path)

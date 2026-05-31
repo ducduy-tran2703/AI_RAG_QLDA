@@ -88,7 +88,7 @@ export const documentApi = {
   get: (id: string) => api.get(`/documents/${id}`),
   update: (id: string, data: any) => api.put(`/documents/${id}`, data),
   delete: (id: string) => api.delete(`/documents/${id}`),
-  download: (id: string) => api.get(`/documents/${id}/download`),
+  download: (id: string) => api.get(`/documents/${id}/download`, { responseType: 'blob' }),
   preview: (id: string) => api.get(`/documents/${id}/preview`),
   listVersions: (id: string) => api.get(`/documents/${id}/versions`),
   createVersion: (id: string, file: File, change_notes?: string) => {
@@ -123,39 +123,33 @@ export const checkApi = {
 
 // ===================== RULES API =====================
 export const rulesApi = {
-  getSets: () => api.get('/rules/sets'),
-  getSet: (id: number) => api.get(`/rules/sets/${id}`),
-  createSet: (data: any) => api.post('/rules/sets', data),
-  updateSet: (id: number, data: any) => api.put(`/rules/sets/${id}`, data),
-  cloneSet: (id: number, data: { new_name: string; new_code: string }) =>
-    api.post(`/rules/sets/${id}/clone`, data),
-  setDefault: (id: number) => api.post(`/rules/sets/${id}/set-default`),
-  createRule: (setId: number, data: any) => api.post(`/rules/sets/${setId}/rules`, data),
-  updateRule: (id: string, data: any) => api.put(`/rules/${id}`, data),
-  deleteRule: (id: string) => api.delete(`/rules/${id}`),
+  getSets: (params?: { page?: number; limit?: number; search?: string }) =>
+    api.get('/rules/sets', { params }),
+  updateSet: (id: string, data: { name: string }) =>
+    api.put(`/rules/sets/${id}`, data),
+  deleteSet: (id: string) =>
+    api.delete(`/rules/sets/${id}`),
+
+  listRules: (setId: string, params?: { page?: number; limit?: number; keywords?: string }) =>
+    api.get(`/rules/sets/${setId}/rules`, { params }),
+  getRule: (setId: string, ruleId: string) =>
+    api.get(`/rules/sets/${setId}/rules/${ruleId}`),
+  createRule: (setId: string, data: any) =>
+    api.post(`/rules/sets/${setId}/rules`, data),
+  updateRule: (setId: string, ruleId: string, data: any) =>
+    api.patch(`/rules/sets/${setId}/rules/${ruleId}`, data),
+  deleteRules: (setId: string, ruleIds: string[]) =>
+    api.delete(`/rules/sets/${setId}/rules`, { data: ruleIds }),
 };
 
 // ===================== KNOWLEDGE API =====================
 export const knowledgeApi = {
-  getCategories: () => api.get('/knowledge/categories'),
-  createCategory: (data: any) => api.post('/knowledge/categories', data),
-  updateCategory: (id: number, data: any) => api.put(`/knowledge/categories/${id}`, data),
-  deleteCategory: (id: number) => api.delete(`/knowledge/categories/${id}`),
   listDocuments: (params?: {
-    page?: number; limit?: number; category_id?: number;
-    status?: string; search?: string;
+    page?: number; limit?: number; search?: string;
   }) => api.get('/knowledge/documents', { params }),
-  uploadDocument: (data: {
-    file: File; title: string; doc_type: string;
-    category_id?: number; doc_code?: string; effective_date?: string;
-  }) => {
+  uploadDocument: (file: File) => {
     const formData = new FormData();
-    formData.append('file', data.file);
-    formData.append('title', data.title);
-    formData.append('doc_type', data.doc_type);
-    if (data.category_id) formData.append('category_id', data.category_id.toString());
-    if (data.doc_code) formData.append('doc_code', data.doc_code);
-    if (data.effective_date) formData.append('effective_date', data.effective_date);
+    formData.append('file', file);
     return api.post('/knowledge/documents', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });

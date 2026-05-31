@@ -1,25 +1,42 @@
-import { useRuleSets, useCreateRuleSet, useCloneRuleSet } from '@/hooks/useRules';
+import { useState } from 'react';
+import { useRuleSets, useUpdateRuleSet, useDeleteRuleSet } from '@/hooks/useRules';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Gavel, Copy, Plus, ArrowRight } from 'lucide-react';
+import { Gavel, Edit2, Trash2, ArrowRight, Loader2, Search } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 export default function RuleSetPage() {
-  const { data: ruleSets, isLoading } = useRuleSets();
-  const cloneMutation = useCloneRuleSet();
+  const [search, setSearch] = useState('');
+  const { data: ruleSets, isLoading } = useRuleSets({ search });
 
-  const handleClone = async (id: number, name: string) => {
-    const newName = prompt('Nhập tên bộ quy tắc mới:', `${name} (Bản sao)`);
-    const newCode = prompt('Nhập mã bộ quy tắc mới (duy nhất):', `${id}_CLONE_${Date.now()}`);
+  const updateMutation = useUpdateRuleSet();
+  const deleteMutation = useDeleteRuleSet();
 
-    if (newName && newCode) {
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editingSet, setEditingDoc] = useState<any>(null);
+  const [newName, setNewName] = useState('');
+
+  const handleDelete = async (id: string, name: string) => {
+    if (confirm(`Xác nhận xóa bộ quy tắc "${name}"?`)) {
       try {
-        await cloneMutation.mutateAsync({ id, data: { new_name: newName, new_code: newCode } });
-        alert('Đã sao chép bộ quy tắc!');
+        await deleteMutation.mutateAsync(id);
       } catch (error) {
-        alert('Lỗi khi sao chép');
+        alert('Lỗi khi xóa');
       }
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!editingSet || !newName.trim()) return;
+    try {
+      await updateMutation.mutateAsync({ id: editingSet.id, data: { name: newName } });
+      setIsEditOpen(false);
+    } catch (error) {
+      alert('Lỗi khi đổi tên');
     }
   };
 
@@ -28,45 +45,51 @@ export default function RuleSetPage() {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Bộ quy tắc kiểm tra</h2>
-          <p className="text-muted-foreground">Cấu hình các tiêu chí AI dùng để đánh giá văn bản</p>
+          <p className="text-muted-foreground">Quản lý các phụ lục quy định (Documents) được lưu trữ trên RAGFlow</p>
         </div>
-        <Button>
-          <Plus className="w-4 h-4 mr-2" /> Tạo bộ quy tắc mới
-        </Button>
+        {/* IT-ADMIN sẽ upload qua script riêng hoặc nút upload sau này */}
+      </div>
+
+      <div className="flex items-center gap-2 max-w-md">
+         <Search className="w-4 h-4 text-muted-foreground" />
+         <Input
+          placeholder="Tìm kiếm bộ quy tắc..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+         />
       </div>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {isLoading ? (
-          <p>Đang tải...</p>
+          <div className="col-span-full py-12 flex justify-center"><Loader2 className="animate-spin h-8 w-8 text-primary" /></div>
         ) : (
           ruleSets?.map((set: any) => (
-            <Card key={set.id} className={set.is_default ? 'border-primary shadow-md' : ''}>
+            <Card key={set.id} className="hover:shadow-md transition-shadow">
               <CardHeader>
                 <div className="flex justify-between items-start">
                   <div className="p-2 bg-primary/10 rounded-lg">
                     <Gavel className="w-6 h-6 text-primary" />
                   </div>
-                  {set.is_default && <Badge>Mặc định</Badge>}
+                  <Badge variant={set.run === 'DONE' ? 'success' : 'secondary'}>{set.run}</Badge>
                 </div>
-                <CardTitle className="mt-4">{set.name}</CardTitle>
-                <CardDescription>{set.code}</CardDescription>
+                <CardTitle className="mt-4 line-clamp-1" title={set.name}>{set.name}</CardTitle>
+                <CardDescription>ID: {set.id.substring(0, 8)}...</CardDescription>
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
-                  {set.description || 'Không có mô tả.'}
-                </p>
-                <div className="flex gap-2 mb-4">
-                  {set.doc_types.map((type: string) => (
-                    <Badge key={type} variant="outline">{type}</Badge>
-                  ))}
-                </div>
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-center mt-2">
                   <div className="text-xs text-muted-foreground">
-                    Phiên bản: {set.version}
+                    Số quy tắc: <span className="font-bold text-foreground">{set.chunk_count}</span>
                   </div>
-                  <div className="flex gap-2">
-                    <Button variant="ghost" size="icon" onClick={() => handleClone(set.id, set.name)}>
-                      <Copy className="w-4 h-4" />
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="icon" onClick={() => {
+                        setEditingDoc(set);
+                        setNewName(set.name);
+                        setIsEditOpen(true);
+                    }}>
+                      <Edit2 className="w-4 h-4 text-blue-600" />
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={() => handleDelete(set.id, set.name)}>
+                      <Trash2 className="w-4 h-4 text-destructive" />
                     </Button>
                     <Button asChild size="sm">
                       <Link to={`/rules/${set.id}`}>
@@ -80,6 +103,23 @@ export default function RuleSetPage() {
           ))
         )}
       </div>
+
+      {/* Dialog Đổi tên */}
+      <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Đổi tên bộ quy tắc</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <Label htmlFor="name">Tên hiển thị</Label>
+            <Input id="name" value={newName} onChange={(e) => setNewName(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditOpen(false)}>Hủy</Button>
+            <Button onClick={handleUpdate} disabled={updateMutation.isPending}>Lưu thay đổi</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
