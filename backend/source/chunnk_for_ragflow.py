@@ -26,7 +26,7 @@ from pathlib import Path
 # CẤU HÌNH
 # ══════════════════════════════════════════════════════════════════════
 
-MAX_CHARS = 3000  # ~750 token tiếng Việt, phù hợp Qwen2.5 7B
+MAX_CHARS = 2000  # ~750 token tiếng Việt, phù hợp Qwen2.5 7B
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -91,7 +91,8 @@ def parse_paragraphs(txt_content: str) -> list[dict]:
 # Pattern nhận dạng thành phần bắt buộc
 # Dấu gạch ngang: hỗ trợ hyphen (-), en-dash (–), em-dash (—)
 _DASH = r"[\-\u2013\u2014]"
-_RE_QUOC_HUU   = re.compile(r"CỘNG\s*HÒA\s*XÃ\s*HỘI\s*CHỦ\s*NGHĨA", re.IGNORECASE)
+# Nhận cả 2 biến thể chính tả: "HÒA" (chuẩn) và "HOÀ" (hay gặp trong văn bản cũ)
+_RE_QUOC_HUU   = re.compile(r"CỘNG\s*H(?:ÒA|OÀ)\s*XÃ\s*HỘI\s*CHỦ\s*NGHĨA", re.IGNORECASE)
 _RE_TIEU_NGU   = re.compile(
     r"Độc\s*lập\s*" + _DASH + r"\s*Tự\s*do\s*" + _DASH + r"\s*Hạnh\s*phúc",
     re.IGNORECASE
@@ -135,10 +136,20 @@ _DOC_TYPE_TITLE = {
     "vbhn":               "VĂN BẢN HỢP NHẤT",
 }
 
-# Pattern nhận dạng Chương / Mục / Điều / Khoản để dựng cây cấu trúc
+# Pattern nhận dạng cấu trúc phân cấp — hỗ trợ cả luật/NĐ lẫn công văn/TT
+# Luật/NĐ/TT: Chương, Mục, Điều
+# Công văn/hướng dẫn: Phần (I/II/...), Khoản (1/2/...), Điểm (a/b/...), Tiết (6.1/...)
 _RE_CHUONG = re.compile(r"^Chương\s+([IVXLCDM]+|\d+)\b", re.IGNORECASE)
 _RE_MUC    = re.compile(r"^Mục\s+(\d+)\b",                re.IGNORECASE)
 _RE_DIEU   = re.compile(r"^Điều\s+(\d+)\b",               re.IGNORECASE)
+_RE_PHAN   = re.compile(r"^[Pp]hần\s+([IVXLCDM]+|\d+)\b")
+_RE_KHOAN  = re.compile(r"^[Kk]hoản\s+(\d+)\b")
+_RE_DIEM   = re.compile(r"^[Đđ]iểm\s+(\d+|[a-z])\b")
+_RE_TIET   = re.compile(r"^[Tt]iết\s+(\d+(?:\.\d+)*)\b")
+# Dạng số đầu dòng cho công văn: "1.", "2.", "1.1.", "8.2."
+# Fix bug 1: bỏ giới hạn chữ HOA — mục có thể bắt đầu chữ thường
+# Fix bug 2: dùng [ \t]+ cho phép nhiều khoảng trắng ("8.  Bổ sung")
+_RE_SO_DAU_DONG = re.compile(r"^(\d+(?:\.\d+)*)\.[ \t]+\S")
 
 
 def _roman_to_int(s: str) -> int:
@@ -185,7 +196,8 @@ def build_meta_chunk(txt_content: str, json_data: dict, filename: str,
         "dia_danh_ngay": None,
         "ten_loai_vb":   None,
         "trich_yeu":     None,
-        "chu_ky":        "DA_CAT",  # đã cắt vùng ký → luôn tích ✅
+        "noi_nhan":      None,
+        "chu_ky":        None,   # giờ tìm thật, không lấp liếm
     }
 
     title_keyword = _DOC_TYPE_TITLE.get(doc_type, "").upper()
@@ -200,11 +212,16 @@ def build_meta_chunk(txt_content: str, json_data: dict, filename: str,
 
         ref = f"PARA_ID={idx}"
 
-        # ten_co_quan: LEFT_COL đầu trang — không áp dụng cho VBHN/Luật
+        # ten_co_quan: LEFT_COL đầu trang hoặc cell r0c0 trong bảng header
+        # Sau khi fix extract_docx, bảng 2 cột được xử lý trước nên idx nhỏ
+        # Zone của cell bảng có dạng "r0c0" (hàng 0, cột 0) = cột trái
         if found["ten_co_quan"] is None:
             if doc_type in _DOC_TYPE_NO_CO_QUAN:
-                found["ten_co_quan"] = "N/A"   # lấp liếm — loại VB này không có
-            elif zone == "LEFT_COL" and idx < 5:
+                found["ten_co_quan"] = "N/A"
+            elif idx < 15 and (
+                zone == "LEFT_COL"
+                or (isinstance(zone, str) and re.match(r"r\d+c0$", zone))
+            ):
                 found["ten_co_quan"] = ref
 
         if found["quoc_hieu"] is None and _RE_QUOC_HUU.search(text):
@@ -222,6 +239,31 @@ def build_meta_chunk(txt_content: str, json_data: dict, filename: str,
 
         if found["dia_danh_ngay"] is None and _RE_DIA_DANH.search(text):
             found["dia_danh_ngay"] = ref
+
+        # noi_nhan: "Nơi nhận:" — thường LEFT_COL hoặc JUSTIFY cuối văn bản
+        if found["noi_nhan"] is None and re.search(r"Nơi\s*nhận", text, re.IGNORECASE):
+            found["noi_nhan"] = ref
+
+        # chu_ky: chức danh ký PHẢI nằm ở cột phải (r0c1/RIGHT_COL) hoặc CENTER
+        # và chỉ nhận dạng sau khi đã tìm thấy nơi nhận (tránh match "Giám đốc các Chi nhánh")
+        # Chữ ký chỉ nhận khi nằm ở cột phải bảng (r0c1) hoặc CENTER/RIGHT_COL
+        # Tránh match nhầm "Giám đốc các Chi nhánh" trong thân văn bản
+        _is_sign_zone = (
+            zone in ("RIGHT_COL", "CENTER")
+            or (isinstance(zone, str) and re.match(r"r\d+c1$", zone))
+        )
+        _RE_CHUC_DANH = re.compile(
+            r"TM\.\s*(ỦY\s*BAN|BỘ|CHÍNH\s*PHỦ|HỘI\s*ĐỒNG|BAN)"
+            r"|KT\.\s*(CHỦ\s*TỊCH|BỘ\s*TRƯỞNG|THỦ\s*TƯỚNG|TỔNG\s*GIÁM\s*ĐỐC)"
+            r"|^TỔNG\s*GIÁM\s*ĐỐC$"           # standalone — phân biệt với "yêu cầu Giám đốc..."
+            r"|^GIÁM\s*ĐỐC$"
+            r"|CHỦ\s*TỊCH\s*(UBND|HỘI\s*ĐỒNG|ỦY\s*BAN)"
+            r"|^BỘ\s*TRƯỞNG$|^THỦ\s*TƯỚNG$"
+            r"|THỪA\s*ỦY\s*QUYỀN|THỪA\s*LỆNH",
+            re.IGNORECASE
+        )
+        if found["chu_ky"] is None and _is_sign_zone and _RE_CHUC_DANH.search(text.strip()):
+            found["chu_ky"] = ref
 
         if found["ten_loai_vb"] is None:
             if doc_type == "vbhn":
@@ -260,9 +302,23 @@ def build_meta_chunk(txt_content: str, json_data: dict, filename: str,
         idx  = p.get("idx", 0)
         text = p.get("text", "").strip()
 
-        mc = _RE_CHUONG.match(text)
-        mm = _RE_MUC.match(text)
-        md = _RE_DIEU.match(text)
+        # Lấy text thuần từ dòng đầu tiên (bỏ nhãn format [fmt]: "...")
+        # Vì parse_paragraphs giữ nguyên cả dòng header [PARA_ID=N | ...]
+        # và các dòng "- [fmt]: text" — cần lấy text thực để match regex
+        raw_text = text
+        # Thử lấy nội dung sau '- [...]:'
+        m_content = re.search(r'^-\s*\[[^\]]*\]:\s*"(.+)"', text, re.MULTILINE)
+        if m_content:
+            raw_text = m_content.group(1).strip()
+
+        mc  = _RE_CHUONG.match(raw_text)
+        mm  = _RE_MUC.match(raw_text)
+        md  = _RE_DIEU.match(raw_text)
+        mp  = _RE_PHAN.match(raw_text)
+        mk  = _RE_KHOAN.match(raw_text)
+        mdi = _RE_DIEM.match(raw_text)
+        mt  = _RE_TIET.match(raw_text)
+        ms  = _RE_SO_DAU_DONG.match(raw_text)
 
         if mc:
             num = _to_int(mc.group(1))
@@ -270,21 +326,27 @@ def build_meta_chunk(txt_content: str, json_data: dict, filename: str,
             label = f"Chương {mc.group(1)}"
             if num != prev_chuong + 1 and prev_chuong > 0:
                 warnings.append(
-                    f"⚠️  {label} (PARA_ID={idx}): nhảy từ Chương {prev_chuong} → {num}"
+                    f"LƯU Ý: {label} (PARA_ID={idx}): nhảy từ Chương {prev_chuong} sang {num}"
                 )
-            struct_lines.append(f"  {label:<12} → PARA_ID={idx}")
+            struct_lines.append(f"  {label:<14} → PARA_ID={idx}")
             prev_chuong = num
             prev_dieu   = 0
             prev_muc    = 0
+
+        elif mp:
+            label = f"Phần {mp.group(1)}"
+            struct_lines.append(f"  {label:<14} → PARA_ID={idx}")
+            prev_muc  = 0  # Fix bug 3: reset bộ đếm mục khi sang Phần mới
+            prev_dieu = 0
 
         elif mm:
             num   = _to_int(mm.group(1))
             label = f"Mục {mm.group(1)}"
             if num != prev_muc + 1 and prev_muc > 0:
                 warnings.append(
-                    f"⚠️  {label} (PARA_ID={idx}): nhảy từ Mục {prev_muc} → {num}"
+                    f"LƯU Ý: {label} (PARA_ID={idx}): nhảy từ Mục {prev_muc} sang {num}"
                 )
-            struct_lines.append(f"    {label:<10} → PARA_ID={idx}")
+            struct_lines.append(f"    {label:<12} → PARA_ID={idx}")
             prev_muc  = num
             prev_dieu = 0
 
@@ -294,13 +356,31 @@ def build_meta_chunk(txt_content: str, json_data: dict, filename: str,
             if num != prev_dieu + 1:
                 if prev_dieu > 0:
                     warnings.append(
-                        f"⚠️  {label} (PARA_ID={idx}): nhảy từ Điều {prev_dieu} → {num}"
+                        f"LƯU Ý: {label} (PARA_ID={idx}): nhảy từ Điều {prev_dieu} sang {num}"
                     )
                 elif has_chuong:
-                    # Điều đầu tiên của chương mới — bình thường nếu tiếp nối
                     pass
-            struct_lines.append(f"    {label:<10} → PARA_ID={idx}")
+            struct_lines.append(f"    {label:<12} → PARA_ID={idx}")
             prev_dieu = num
+
+        elif mk:
+            label = f"Khoản {mk.group(1)}"
+            struct_lines.append(f"    {label:<12} → PARA_ID={idx}")
+
+        elif mdi:
+            label = f"Điểm {mdi.group(1)}"
+            struct_lines.append(f"      {label:<10} → PARA_ID={idx}")
+
+        elif mt:
+            label = f"Tiết {mt.group(1)}"
+            struct_lines.append(f"      {label:<10} → PARA_ID={idx}")
+
+        elif ms:
+            # Số đầu dòng kiểu công văn: "1.", "8.2." — chỉ ghi nếu là số đơn
+            num_str = ms.group(1)
+            if "." not in num_str:   # chỉ lấy mục cấp 1 (1, 2, 3...) tránh spam
+                label = f"Mục {num_str}."
+                struct_lines.append(f"  {label:<14} → PARA_ID={idx}")
 
     # ── 3. Thông số trang ─────────────────────────────────────────────
     ps  = json_data.get("page_size", {})
@@ -329,8 +409,8 @@ def build_meta_chunk(txt_content: str, json_data: dict, filename: str,
     # ── Ghép nội dung meta-chunk ──────────────────────────────────────
     sep  = "━" * 34
     lines = [
-        f"📄 TÀI LIỆU: {filename}",
-        f"📎 NGUỒN: {json_data.get('source','').upper()} | LOẠI VĂN BẢN: {_DOC_TYPE_VI.get(doc_type, doc_type)}",
+        f" TÀI LIỆU: {filename}",
+        f" NGUỒN: {json_data.get('source','').upper()} | LOẠI VĂN BẢN: {_DOC_TYPE_VI.get(doc_type, doc_type)}",
         "",
         sep,
         "PHẦN 1 — THÀNH PHẦN BẮT BUỘC",
@@ -338,30 +418,34 @@ def build_meta_chunk(txt_content: str, json_data: dict, filename: str,
     ]
 
     component_labels = {
-        "ten_co_quan":   "ten_co_quan  ",
-        "quoc_hieu":     "quoc_hieu    ",
-        "tieu_ngu":      "tieu_ngu     ",
-        "so_ky_hieu":    "so_ky_hieu   ",
-        "dia_danh_ngay": "dia_danh_ngay",
-        "ten_loai_vb":   "ten_loai_vb  ",
-        "trich_yeu":     "trich_yeu    ",
-        "chu_ky":        "chu_ky       ",
+        "ten_co_quan":   "Tên cơ quan ban hành  ",
+        "quoc_hieu":     "Quốc hiệu             ",
+        "tieu_ngu":      "Tiêu ngữ              ",
+        "so_ky_hieu":    "Số ký hiệu            ",
+        "dia_danh_ngay": "Địa danh và ngày tháng",
+        "ten_loai_vb":   "Tên loại văn bản      ",
+        "trich_yeu":     "Trích yếu nội dung    ",
+        "noi_nhan":      "Nơi nhận              ",
+        "chu_ky":        "Chữ ký                ",
     }
     for key, label in component_labels.items():
         val = found[key]
         if val is None:
-            mark, ref = "❌", "→ THIẾU"
+            trang_thai = "Chưa có"
+            ref = ""
         elif val in ("N/A", "DA_CAT"):
-            mark, ref = "✅", ""
+            trang_thai = "Đã có"
+            ref = ""
         else:
-            mark, ref = "✅", f"→ {val}"
-        lines.append(f"{mark} {label} {ref}".rstrip())
+            trang_thai = "Đã có"
+            ref = f"→ {val}"
+        lines.append(f"{label}: {trang_thai} {ref}".rstrip())
 
     lines += ["", sep, "PHẦN 2 — THỨ TỰ CẤU TRÚC", sep]
     if struct_lines:
         lines.extend(struct_lines)
     else:
-        lines.append("  (Không phát hiện Chương/Điều — văn bản không có cấu trúc phân cấp)")
+        lines.append("  (Không phát hiện Chương/Điều - văn bản không có cấu trúc phân cấp)")
     if warnings:
         lines.append("")
         lines.extend(warnings)
@@ -384,9 +468,14 @@ def build_meta_chunk(txt_content: str, json_data: dict, filename: str,
 
 
 
-def build_chunks(txt_content: str, filename: str) -> list[dict]:
+def build_chunks(txt_content: str, filename: str,
+                  header_idxs: set | None = None) -> list[dict]:
     """
     Chia txt thành các chunk theo MAX_CHARS.
+
+    header_idxs: tập PARA_ID thuộc vùng header bảng (tên cơ quan, quốc hiệu,
+                 nơi nhận, chữ ký...) — đã được đưa vào chunk_000, KHÔNG chunk lại.
+                 Lấy từ JSON gốc: các para có zone dạng r0cN.
 
     Mỗi chunk:
     {
@@ -401,6 +490,10 @@ def build_chunks(txt_content: str, filename: str) -> list[dict]:
     """
     header_block = extract_header_block(txt_content)
     paragraphs   = parse_paragraphs(txt_content)
+    skip_idxs    = header_idxs or set()
+
+    # Lọc bỏ các para thuộc header bảng (đã có trong chunk_000)
+    body_paragraphs = [p for p in paragraphs if p["idx"] not in skip_idxs]
 
     chunks     = []
     chunk_idx  = 1
@@ -421,7 +514,7 @@ def build_chunks(txt_content: str, filename: str) -> list[dict]:
             "content": content,
         }
 
-    for para in paragraphs:
+    for para in body_paragraphs:
         para_len = len(para["text"])
 
         # Nếu thêm đoạn này sẽ vượt MAX_CHARS → flush chunk hiện tại trước
@@ -474,22 +567,35 @@ if __name__ == "__main__":
             if m:
                 filename = m.group(1).strip()
 
-            # ── Chunks nội dung ──────────────────────────────────────
-            content_chunks = build_chunks(txt_content, filename)
-
-            # ── Meta-chunk (chunk_000) ───────────────────────────────
-            # Tìm file JSON gốc tương ứng để lấy structured data
+            # ── Đọc JSON gốc (cần cho cả meta-chunk và header_idxs) ─
             json_path = output_dir / f"{txt_path.stem}.json"
-            meta_chunk = None
+            json_data    = None
+            header_idxs  = set()
             if json_path.exists():
                 with open(json_path, encoding="utf-8") as jf:
                     json_data = json.load(jf)
+                # Para có zone dạng rNcM (cell bảng) = thuộc header layout
+                # Chúng đã được đưa vào chunk_000, không chunk lại vào nội dung
+                header_idxs = {
+                    p["idx"]
+                    for p in json_data.get("paragraphs", [])
+                    if re.match(r"r\d+c\d+$", str(p.get("zone", "")))
+                }
+                if header_idxs:
+                    print(f"   📌 Header bảng: {len(header_idxs)} para (idx={sorted(header_idxs)}) → skip khỏi content chunks")
+            else:
+                print(f"   ⚠️  Không tìm thấy JSON gốc ({json_path.name}), bỏ qua meta-chunk")
+
+            # ── Chunks nội dung (bỏ qua header para) ────────────────
+            content_chunks = build_chunks(txt_content, filename, header_idxs=header_idxs)
+
+            # ── Meta-chunk (chunk_000) ───────────────────────────────
+            meta_chunk = None
+            if json_data is not None:
                 meta_chunk = build_meta_chunk(
                     txt_content, json_data, filename,
                     total_content_chunks=len(content_chunks),
                 )
-            else:
-                print(f"   ⚠️  Không tìm thấy JSON gốc ({json_path.name}), bỏ qua meta-chunk")
 
             # ── Ghép: meta_chunk đứng đầu, content_chunks theo sau ──
             all_chunks = ([meta_chunk] if meta_chunk else []) + content_chunks

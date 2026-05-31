@@ -913,8 +913,8 @@ def extract_pdf_optimized(pdf_path: str, max_pages: int = None) -> Dict[str, Any
     if all_rules:
         _match_borders_to_paragraphs(all_paragraphs, all_rules)
 
-    # ── Cắt vùng chữ ký / dấu mộc cuối văn bản ────────────────────────
-    all_paragraphs = _drop_signature_zone(all_paragraphs)
+    # ── GIỮ TOÀN BỘ: không cắt vùng chữ ký / nơi nhận ─────────────────
+    # Tất cả thành phần đều cần kiểm tra thể thức theo NĐ30
 
     # ── Phát hiện loại văn bản ─────────────────────────────────────────
     para_texts = [p.get('text', '') for p in all_paragraphs]

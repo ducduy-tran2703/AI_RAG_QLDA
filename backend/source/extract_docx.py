@@ -61,6 +61,7 @@ from dataclasses import dataclass, field
 from docx import Document
 from docx.oxml.ns import qn
 from lxml import etree
+import re as _re_top  # dùng cho numbered list
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -193,6 +194,89 @@ def _get_theme_fonts(docx_path: str) -> dict:
     except Exception:
         pass
     return result
+
+
+def _get_numbering_map(docx_path: str) -> dict:
+    """
+    Đọc numbering.xml, trả về map:
+      (numId, ilvl) → start_value (int)
+
+    Dùng để bóc số thứ tự tự động (Word List Numbering) vào text.
+    VD: numId=1, ilvl=0, start=1 → mục "1.", "2.", "3."...
+    """
+    result = {}
+    W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    wval = f'{{{W}}}val'
+    try:
+        with zipfile.ZipFile(docx_path) as z:
+            if 'word/numbering.xml' not in z.namelist():
+                return result
+            tree = etree.fromstring(z.read('word/numbering.xml'))
+            ns = {'w': W}
+
+            # abstractNum: lưu ilvl → start
+            abstract_starts = {}
+            for ab in tree.findall('w:abstractNum', ns):
+                ab_id = ab.get(f'{{{W}}}abstractNumId')
+                ab_starts = {}
+                for lvl in ab.findall('w:lvl', ns):
+                    ilvl = lvl.get(f'{{{W}}}ilvl', '0')
+                    start_el = lvl.find('w:start', ns)
+                    numFmt_el = lvl.find('w:numFmt', ns)
+                    fmt = numFmt_el.get(wval, '') if numFmt_el is not None else ''
+                    start = int(start_el.get(wval, 1)) if start_el is not None else 1
+                    ab_starts[ilvl] = {'start': start, 'fmt': fmt}
+                abstract_starts[ab_id] = ab_starts
+
+            # num: numId → abstractNumId (+ xử lý lvlOverride/startOverride)
+            for num_el in tree.findall('w:num', ns):
+                num_id = num_el.get(f'{{{W}}}numId')
+                ref = num_el.find('w:abstractNumId', ns)
+                if ref is None:
+                    continue
+                ab_id = ref.get(wval)
+                ab_data = abstract_starts.get(ab_id, {})
+                for ilvl, data in ab_data.items():
+                    result[(num_id, ilvl)] = dict(data)  # copy để tránh mutate abstractNum gốc
+
+                # Đọc lvlOverride: Word dùng khi người dùng "Continue numbering"
+                # hoặc "Set numbering value" → startOverride ghi đè start của abstractNum
+                for ov in num_el.findall('w:lvlOverride', ns):
+                    olvl = ov.get(f'{{{W}}}ilvl', '0')
+                    startOverride_el = ov.find('w:startOverride', ns)
+                    if startOverride_el is not None:
+                        override_val = int(startOverride_el.get(wval, 1))
+                        key = (num_id, olvl)
+                        if key in result:
+                            result[key] = {**result[key], 'start': override_val}
+                        else:
+                            result[key] = {'start': override_val, 'fmt': 'decimal'}
+    except Exception:
+        pass
+    return result
+
+
+def _get_para_numpr(para) -> tuple:
+    """
+    Lấy (numId, ilvl) từ paragraph nếu nó thuộc numbered list.
+    Trả về (None, None) nếu không phải list.
+    """
+    ppr = para._p.find(qn('w:pPr'))
+    if ppr is None:
+        return None, None
+    numPr = ppr.find(qn('w:numPr'))
+    if numPr is None:
+        return None, None
+    numId_el = numPr.find(qn('w:numId'))
+    ilvl_el  = numPr.find(qn('w:ilvl'))
+    if numId_el is None:
+        return None, None
+    numId = numId_el.get(qn('w:val'))
+    ilvl  = ilvl_el.get(qn('w:val'), '0') if ilvl_el is not None else '0'
+    # numId=0 nghĩa là tắt list
+    if numId == '0':
+        return None, None
+    return numId, ilvl
 
 
 def _get_style_fonts_from_zip(docx_path: str) -> dict:
@@ -756,26 +840,32 @@ def extract_docx_optimized(docx_path: str) -> Dict[str, Any]:
     left_margin_cm  = left_cm   or 3.0
     right_margin_cm = right_cm  or 2.0
 
-    # ── Style map + theme fonts ────────────────────────────────────────
-    theme_fonts = _get_theme_fonts(str(path))
-    style_map   = _get_style_fonts_from_zip(str(path))
+    # ── Style map + theme fonts + numbering ───────────────────────────
+    theme_fonts  = _get_theme_fonts(str(path))
+    style_map    = _get_style_fonts_from_zip(str(path))
+    numbering_map = _get_numbering_map(str(path))  # (numId,ilvl) → {start,fmt}
+    # Bộ đếm số thứ tự hiện tại theo (numId, ilvl)
+    num_counters: dict = {}
 
     # ── Số trang (header/footer) ───────────────────────────────────────
     page_number = _extract_page_number_info(doc, str(path))
 
-    # ── Paragraphs thường (ngoài bảng) ────────────────────────────────
-    paragraphs: List[Dict[str, Any]] = []
-    for idx, para in enumerate(doc.paragraphs):
-        info = _extract_paragraph(
-            para, idx, style_map, theme_fonts,
-            page_width_cm, left_margin_cm, right_margin_cm,
-        )
-        if info:
-            paragraphs.append(info)
+    # ── Xác định para nằm trong bảng để skip khi duyệt thường ──────────
+    # Văn bản hành chính VN hay dùng bảng ẩn để layout 2 cột ở đầu trang
+    # (tên cơ quan LEFT | quốc hiệu RIGHT). Phải xử lý bảng TRƯỚC để các
+    # para này có idx nhỏ → build_meta_chunk nhận ra quốc hiệu, tên cơ quan.
+    table_para_ids: set = set()
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    table_para_ids.add(id(para._p))
 
-    # ── Paragraphs trong bảng ──────────────────────────────────────────
+    paragraphs: List[Dict[str, Any]] = []
+
+    # ── Bước 1: Paragraphs trong bảng TRƯỚC (header 2 cột) ────────────
     table_paras = _extract_table_paragraphs(
-        doc, start_idx=len(paragraphs),
+        doc, start_idx=0,
         style_map=style_map, theme_fonts=theme_fonts,
         page_width_cm=page_width_cm,
         left_margin_cm=left_margin_cm,
@@ -783,8 +873,95 @@ def extract_docx_optimized(docx_path: str) -> Dict[str, Any]:
     )
     paragraphs.extend(table_paras)
 
-    # ── Cắt vùng chữ ký / dấu mộc cuối văn bản ────────────────────────
-    paragraphs = _drop_signature_zone(paragraphs)
+    # ── Bước 2: Paragraphs thường (ngoài bảng) ────────────────────────
+    # Xây dựng map: numId → abstractNumId để nhận biết các numId thuộc cùng 1 list
+    # (Word tạo numId mới khi người dùng ngắt rồi nối tiếp list, nhưng cùng abstractNumId)
+    num_to_abstract: dict = {}
+    try:
+        W_ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+        wval_ns = f'{{{W_ns}}}val'
+        import zipfile as _zf2
+        from lxml import etree as _et2
+        with _zf2.ZipFile(str(path)) as _z2:
+            if 'word/numbering.xml' in _z2.namelist():
+                _tree2 = _et2.fromstring(_z2.read('word/numbering.xml'))
+                _ns2 = {'w': W_ns}
+                for _num_el in _tree2.findall('w:num', _ns2):
+                    _nid = _num_el.get(f'{{{W_ns}}}numId')
+                    _ref = _num_el.find('w:abstractNumId', _ns2)
+                    if _ref is not None:
+                        num_to_abstract[_nid] = _ref.get(wval_ns)
+    except Exception:
+        pass
+
+    # Bộ đếm theo (abstractNumId, ilvl) thay vì (numId, ilvl)
+    # → các numId khác nhau nhưng cùng abstractNumId sẽ dùng chung bộ đếm
+    abstract_counters: dict = {}
+
+    for para in doc.paragraphs:
+        # Bỏ qua para đã xử lý trong bảng ở bước 1
+        if id(para._p) in table_para_ids:
+            continue
+
+        # ── Xử lý Word List Numbering ─────────────────────────────────
+        # Nếu paragraph thuộc numbered list, tính số thứ tự và prefix vào text
+        num_id, ilvl = _get_para_numpr(para)
+        num_prefix = None
+        if num_id is not None:
+            key = (num_id, ilvl)
+            num_data = numbering_map.get(key, {})
+            fmt = num_data.get('fmt', 'decimal')
+            if fmt in ('decimal', 'lowerLetter', 'upperLetter',
+                       'lowerRoman', 'upperRoman', ''):
+                start = num_data.get('start', 1)
+                # Dùng (abstractNumId, ilvl) làm key bộ đếm để các numId
+                # khác nhau nhưng cùng list (cùng abstractNumId) không reset nhau
+                ab_id = num_to_abstract.get(num_id, num_id)
+                ab_key = (ab_id, ilvl)
+                # Khởi tạo bộ đếm nếu chưa có, hoặc nếu start > counter hiện tại
+                # (trường hợp startOverride yêu cầu bắt đầu từ số cụ thể)
+                current = abstract_counters.get(ab_key)
+                if current is None or start > current + 1:
+                    abstract_counters[ab_key] = start - 1
+                count = abstract_counters[ab_key] + 1
+                abstract_counters[ab_key] = count
+                # Giữ tương thích num_counters cũ (dùng trong reset cấp con)
+                num_counters[key] = count
+                # Reset bộ đếm cấp con khi tăng cấp cha
+                for k in list(abstract_counters.keys()):
+                    k_ab, k_ilvl = k
+                    if k_ab == ab_id and int(k_ilvl) > int(ilvl):
+                        # tìm start của cấp con này
+                        child_key = next(
+                            ((nid, k_ilvl) for nid, ni in num_to_abstract.items()
+                             if ni == k_ab),
+                            None
+                        )
+                        child_start = numbering_map.get(child_key, {}).get('start', 1) if child_key else 1
+                        abstract_counters[k] = child_start - 1
+                # Tạo prefix: "1.", "2.", ...
+                num_prefix = f"{count}."
+
+        info = _extract_paragraph(
+            para, len(paragraphs), style_map, theme_fonts,
+            page_width_cm, left_margin_cm, right_margin_cm,
+        )
+        if info:
+            # Gắn số thứ tự vào text nếu text chưa có sẵn số này
+            if num_prefix and not _re_top.match(
+                r'^\s*\d+[.)]\s*', info.get('text', '')
+            ):
+                info['text'] = num_prefix + ' ' + info['text']
+                # Cập nhật runs: thêm run số vào đầu
+                existing_runs = info.get('runs', [])
+                num_run = {'fmt': 'list-number', 'txt': num_prefix + ' '}
+                info['runs'] = [num_run] + existing_runs if existing_runs else None
+                if info['runs'] is None:
+                    del info['runs']
+            paragraphs.append(info)
+
+    # ── GIỮ TOÀN BỘ: không cắt vùng chữ ký / nơi nhận ───────────────
+    # Tất cả thành phần đều cần kiểm tra thể thức theo NĐ30
 
     # ── Phát hiện loại văn bản ─────────────────────────────────────────
     para_texts = [p.get('text', '') for p in paragraphs]
